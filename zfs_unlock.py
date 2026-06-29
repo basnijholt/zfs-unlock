@@ -44,13 +44,13 @@ CONFIG_SEARCH_PATHS = [
     Path.home() / ".config" / "zfs-unlock" / "config.yaml",
     Path.home() / ".config" / "zfs-unlock" / "config.yml",
 ]
-DEFAULT_IDENTITY_FILE = Path("~/.ssh/zfs-unlock-nas")
+DEFAULT_IDENTITY_FILE = Path("~/.ssh/zfs-unlock-receiver")
 
 EXAMPLE_CONFIG = """\
-host: nas.local
+host: zfs-host.example.lan
 user: zfs-unlock
 # port: 22
-# identity_file: ~/.ssh/zfs-unlock-nas
+# identity_file: ~/.ssh/zfs-unlock-receiver
 # connect_timeout: 5
 # command_timeout: 30
 # secrets: auto  # auto (default), files, or inline
@@ -272,7 +272,7 @@ def parse_receiver_command(command: str) -> list[str]:
 
 
 class Receiver:
-    """Restricted NAS-side receiver for ZFS unlock commands."""
+    """Restricted receiver for ZFS unlock commands."""
 
     def __init__(
         self,
@@ -1005,7 +1005,7 @@ def receiver(
         typer.Option("--zfs-path", help="Path to the zfs executable"),
     ] = "zfs",
 ) -> None:
-    """Run the restricted NAS-side receiver."""
+    """Run the restricted receiver."""
     args = list(ctx.args)
     if len(args) == 1:
         args = parse_receiver_command(args[0])
