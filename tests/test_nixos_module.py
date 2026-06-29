@@ -127,6 +127,113 @@ def test_nixos_receiver_module_defaults_to_flake_python_package() -> None:
     assert data == {"hasPackage": True, "usesPackagedApp": True}
 
 
+def test_nixos_receiver_module_enables_linger_by_default() -> None:
+    """The receiver user keeps a stable user manager by default."""
+    nix = shutil.which("nix")
+    if nix is None:
+        pytest.skip("nix is not installed")
+
+    repo = Path(__file__).resolve().parents[1]
+    expr = f"""
+      let
+        flake = builtins.getFlake "path:{repo}";
+        system = builtins.currentSystem;
+        pkgs = import flake.inputs.nixpkgs {{ inherit system; }};
+        eval = flake.inputs.nixpkgs.lib.nixosSystem {{
+          inherit system;
+          modules = [
+            flake.nixosModules.receiver
+            ({{
+              services.zfsUnlock.receiver = {{
+                enable = true;
+                allowedFrom = [ "192.0.2.7" ];
+                authorizedKeys = [ "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestOnlyKey pi4-zfs-unlock" ];
+                datasets = [ "tank/photos" ];
+                package = pkgs.writeShellScriptBin "zfs-unlock" "exit 0";
+              }};
+            }})
+          ];
+        }};
+      in {{
+        linger = eval.config.users.users.zfs-unlock.linger or null;
+      }}
+    """
+    result = subprocess.run(
+        [
+            nix,
+            "--extra-experimental-features",
+            "nix-command flakes",
+            "eval",
+            "--impure",
+            "--json",
+            "--expr",
+            expr,
+        ],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["linger"] is True
+
+
+def test_nixos_receiver_module_can_disable_linger() -> None:
+    """Users can opt out of receiver user linger."""
+    nix = shutil.which("nix")
+    if nix is None:
+        pytest.skip("nix is not installed")
+
+    repo = Path(__file__).resolve().parents[1]
+    expr = f"""
+      let
+        flake = builtins.getFlake "path:{repo}";
+        system = builtins.currentSystem;
+        pkgs = import flake.inputs.nixpkgs {{ inherit system; }};
+        eval = flake.inputs.nixpkgs.lib.nixosSystem {{
+          inherit system;
+          modules = [
+            flake.nixosModules.receiver
+            ({{
+              services.zfsUnlock.receiver = {{
+                enable = true;
+                enableLinger = false;
+                allowedFrom = [ "192.0.2.7" ];
+                authorizedKeys = [ "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestOnlyKey pi4-zfs-unlock" ];
+                datasets = [ "tank/photos" ];
+                package = pkgs.writeShellScriptBin "zfs-unlock" "exit 0";
+              }};
+            }})
+          ];
+        }};
+      in {{
+        linger = eval.config.users.users.zfs-unlock.linger or null;
+      }}
+    """
+    result = subprocess.run(
+        [
+            nix,
+            "--extra-experimental-features",
+            "nix-command flakes",
+            "eval",
+            "--impure",
+            "--json",
+            "--expr",
+            expr,
+        ],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["linger"] is False
+
+
 def test_nixos_client_module_generates_packaged_daemon_service() -> None:
     """The flake exports a NixOS client module for a packaged daemon."""
     nix = shutil.which("nix")

@@ -58,6 +58,17 @@ in
       description = "Home directory for the receiver user.";
     };
 
+    enableLinger = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = ''
+        Enable systemd linger for the receiver user.
+
+        This keeps the receiver user's systemd user manager stable across short-lived forced-command SSH sessions and
+        avoids NixOS switch-time D-Bus races after the receiver account has been used.
+      '';
+    };
+
     shell = lib.mkOption {
       type = lib.types.str;
       default = pkgs.runtimeShell;
@@ -115,6 +126,7 @@ in
       group = cfg.group;
       home = cfg.home;
       createHome = true;
+      linger = lib.mkDefault cfg.enableLinger;
       shell = cfg.shell;
       openssh.authorizedKeys.keys = map forcedCommandKey cfg.authorizedKeys;
     };

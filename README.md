@@ -139,6 +139,9 @@ Then configure only the receiver policy on the ZFS host:
 
 The module creates the `zfs-unlock` SSH user, forced command, sudo rule, receiver wrapper, login shell, and `/etc/zfs-unlock/allowed-datasets`.
 The receiver still checks each requested dataset against that allowlist.
+By default the module also enables systemd linger for the receiver user.
+That keeps the receiver user's systemd user manager stable across short-lived forced-command SSH sessions and avoids NixOS switch-time D-Bus races after the receiver account has been used.
+Set `services.zfsUnlock.receiver.enableLinger = false` if you do not want the module to manage linger for that user.
 
 On a NixOS unlock device, include the client module and enable the daemon:
 
