@@ -161,6 +161,9 @@ After rebuilding the NAS, verify the client and receiver path:
 zfs-unlock doctor
 ```
 
+`doctor` also checks that the configured SSH identity file and file-backed
+dataset secrets are private to the local user.
+
 ## Usage
 
 ```bash

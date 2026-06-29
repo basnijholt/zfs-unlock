@@ -16,6 +16,13 @@ runner = CliRunner()
 DAEMON_RUN_CALLS = 3
 
 
+def write_private_file(path: Path, text: str = "secret") -> Path:
+    """Write a test secret file with private permissions."""
+    path.write_text(text)
+    path.chmod(0o600)
+    return path
+
+
 class TestFilterDatasets:
     """Tests for filter_datasets function."""
 
@@ -260,8 +267,7 @@ def test_doctor_reports_missing_identity_file(tmp_path: Path) -> None:
 def test_doctor_checks_receiver_status(tmp_path: Path) -> None:
     """Doctor checks the receiver using a status command for one dataset."""
     config_file = tmp_path / "config.yaml"
-    key = tmp_path / "zfs-unlock-nas"
-    key.write_text("secret")
+    key = write_private_file(tmp_path / "zfs-unlock-nas")
     config_file.write_text(f"host: 192.0.2.1\nidentity_file: {key}\ndatasets:\n  tank/ds: pass")
 
     with (
@@ -284,8 +290,7 @@ def test_doctor_checks_receiver_status(tmp_path: Path) -> None:
 def test_doctor_reports_missing_ssh_executable(tmp_path: Path) -> None:
     """Doctor reports when ssh is unavailable in the current environment."""
     config_file = tmp_path / "config.yaml"
-    key = tmp_path / "zfs-unlock-nas"
-    key.write_text("secret")
+    key = write_private_file(tmp_path / "zfs-unlock-nas")
     config_file.write_text(f"host: 192.0.2.1\nidentity_file: {key}\ndatasets:\n  tank/ds: pass")
 
     with (
@@ -308,8 +313,7 @@ def test_doctor_reports_missing_ssh_executable(tmp_path: Path) -> None:
 def test_doctor_checks_all_configured_datasets(tmp_path: Path) -> None:
     """Doctor checks every configured dataset by default."""
     config_file = tmp_path / "config.yaml"
-    key = tmp_path / "zfs-unlock-nas"
-    key.write_text("secret")
+    key = write_private_file(tmp_path / "zfs-unlock-nas")
     config_file.write_text(
         f"host: 192.0.2.1\nidentity_file: {key}\ndatasets:\n  tank/one: pass\n  tank/two: pass",
     )
@@ -340,8 +344,7 @@ def test_doctor_checks_all_configured_datasets(tmp_path: Path) -> None:
 def test_doctor_fails_unknown_receiver_status(tmp_path: Path) -> None:
     """Doctor fails when a receiver reports an unclassified dataset status."""
     config_file = tmp_path / "config.yaml"
-    key = tmp_path / "zfs-unlock-nas"
-    key.write_text("secret")
+    key = write_private_file(tmp_path / "zfs-unlock-nas")
     config_file.write_text(f"host: 192.0.2.1\nidentity_file: {key}\ndatasets:\n  tank/plain: pass")
 
     with (
@@ -357,6 +360,39 @@ def test_doctor_fails_unknown_receiver_status(tmp_path: Path) -> None:
 
     assert result.exit_code == 1
     assert "receiver status unexpected: tank/plain -> unknown" in result.stdout
+
+
+def test_doctor_fails_world_readable_identity_file(tmp_path: Path) -> None:
+    """Doctor rejects SSH identity files readable by group or others."""
+    config_file = tmp_path / "config.yaml"
+    key = tmp_path / "zfs-unlock-nas"
+    key.write_text("secret")
+    key.chmod(0o644)
+    config_file.write_text(f"host: 192.0.2.1\nidentity_file: {key}\ndatasets:\n  tank/ds: pass")
+
+    result = runner.invoke(app, ["doctor", "--config", str(config_file)])
+
+    assert result.exit_code == 1
+    assert "identity file permissions too open" in result.stdout
+    assert str(key) in result.stdout
+
+
+def test_doctor_fails_world_readable_file_secret(tmp_path: Path) -> None:
+    """Doctor rejects file-backed dataset secrets readable by group or others."""
+    config_file = tmp_path / "config.yaml"
+    key = write_private_file(tmp_path / "zfs-unlock-nas")
+    secret = tmp_path / "tank-ds.key"
+    secret.write_text("passphrase")
+    secret.chmod(0o644)
+    config_file.write_text(
+        f"host: 192.0.2.1\nidentity_file: {key}\nsecrets: files\ndatasets:\n  tank/ds: {secret}",
+    )
+
+    result = runner.invoke(app, ["doctor", "--config", str(config_file)])
+
+    assert result.exit_code == 1
+    assert "secret file permissions too open for tank/ds" in result.stdout
+    assert str(secret) in result.stdout
 
 
 def test_keygen_creates_unlock_key(tmp_path: Path) -> None:

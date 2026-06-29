@@ -591,18 +591,52 @@ def _check_fail(message: str) -> None:
     console.print(f"[red]FAIL[/red] {message}", soft_wrap=True)
 
 
+def _is_private_file(path: Path) -> bool:
+    """Return whether a file is unreadable and unwritable by group/others."""
+    if os.name == "nt":
+        return True
+    return path.stat().st_mode & 0o077 == 0
+
+
+def _check_private_file(path: Path, label: str) -> bool:
+    """Check that a sensitive file exists and has private permissions."""
+    if not path.exists():
+        _check_fail(f"{label} missing: {path}")
+        return False
+    if not _is_private_file(path):
+        _check_fail(f"{label} permissions too open: {path}")
+        return False
+    _check_ok(f"{label} permissions private: {path}")
+    return True
+
+
 def _check_identity_file(identity_file: Path | None) -> bool:
     if identity_file is None:
         console.print("[yellow]WARN[/yellow] identity file not configured; SSH defaults will be used")
         return True
 
     identity_path = identity_file.expanduser()
-    if not identity_path.exists():
-        _check_fail(f"identity file missing: {identity_path}")
-        return False
+    return _check_private_file(identity_path, "identity file")
 
-    _check_ok(f"identity file exists: {identity_path}")
-    return True
+
+def _check_secret_file_permissions(config: Config) -> bool:
+    ok = True
+    for dataset in config.datasets:
+        path = Path(dataset.secret).expanduser()
+        if config.secrets == SecretsMode.INLINE:
+            continue
+        if config.secrets == SecretsMode.AUTO and not path.exists():
+            continue
+        if not path.exists():
+            _check_fail(f"secret file missing for {dataset.path}: {path}")
+            ok = False
+            continue
+        if not _is_private_file(path):
+            _check_fail(f"secret file permissions too open for {dataset.path}: {path}")
+            ok = False
+            continue
+        _check_ok(f"secret file permissions private for {dataset.path}: {path}")
+    return ok
 
 
 def _check_ssh_executable() -> bool:
@@ -717,6 +751,9 @@ def doctor(
     _check_ok("config parsed")
 
     if not _check_identity_file(config.identity_file):
+        raise typer.Exit(1)
+
+    if not _check_secret_file_permissions(config):
         raise typer.Exit(1)
 
     if not _check_ssh_executable():
