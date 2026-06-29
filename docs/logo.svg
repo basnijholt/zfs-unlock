@@ -40,12 +40,12 @@
         attributeName="transform"
         type="translate"
         dur="5.8s"
-        values="0 0; 0 0; 0 -26; 0 -26; 0 0; 0 0"
+        values="0 0; 0 0; 0 -34; 0 -34; 0 0; 0 0"
         keyTimes="0; 0.34; 0.48; 0.72; 0.86; 1"
         repeatCount="indefinite"
       />
-      <path d="M178 238V184C178 130 212 96 256 96S334 130 334 184V238" stroke="#d5f9f3" stroke-width="34" />
-      <path d="M178 238V184C178 130 212 96 256 96S334 130 334 184V238" stroke="#5eead4" stroke-width="12" />
+      <path d="M178 252V184C178 130 212 96 256 96S334 130 334 184V228" stroke="#d5f9f3" stroke-width="34" />
+      <path d="M178 252V184C178 130 212 96 256 96S334 130 334 184V228" stroke="#5eead4" stroke-width="12" />
     </g>
     <g id="static-shackle" fill="none" stroke-linecap="round">
       <path d="M178 238V184C178 130 212 96 256 96S334 130 334 184V238" stroke="#d5f9f3" stroke-width="34" />
