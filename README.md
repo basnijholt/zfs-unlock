@@ -224,26 +224,25 @@ zfs-unlock --help
 
  Unlock OpenZFS datasets over a restricted SSH receiver
 
-╭─ Options ────────────────────────────────────────────────────────────────────╮
-│ --version  -v        Show version and exit                                   │
-│ --help     -h        Show this message and exit.                             │
-╰──────────────────────────────────────────────────────────────────────────────╯
-╭─ Setup Commands ─────────────────────────────────────────────────────────────╮
-│ keygen    Generate a dedicated SSH key for zfs-unlock.                       │
-╰──────────────────────────────────────────────────────────────────────────────╯
-╭─ Client Commands ────────────────────────────────────────────────────────────╮
-│ doctor    Check client config, SSH key, host reachability, and receiver      │
-│           status.                                                            │
-│ unlock    Unlock configured datasets.                                        │
-│ lock      Lock configured datasets.                                          │
-│ status    Show lock status of configured datasets.                           │
-╰──────────────────────────────────────────────────────────────────────────────╯
-╭─ Receiver Commands ──────────────────────────────────────────────────────────╮
-│ receiver  Run the restricted NAS-side receiver.                              │
-╰──────────────────────────────────────────────────────────────────────────────╯
-╭─ Service Commands ───────────────────────────────────────────────────────────╮
-│ service   Manage system service                                              │
-╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ Options ──────────────────────────────────────────────────────────────────────────────╮
+│ --version  -v        Show version and exit                                             │
+│ --help     -h        Show this message and exit.                                       │
+╰────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Client Commands ──────────────────────────────────────────────────────────────────────╮
+│ unlock    Unlock configured datasets.                                                  │
+│ lock      Lock configured datasets.                                                    │
+│ status    Show lock status of configured datasets.                                     │
+│ doctor    Check client config, SSH key, host reachability, and receiver status.        │
+╰────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Setup Commands ───────────────────────────────────────────────────────────────────────╮
+│ keygen    Generate a dedicated SSH key for zfs-unlock.                                 │
+╰────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Receiver Commands ────────────────────────────────────────────────────────────────────╮
+│ receiver  Run the restricted NAS-side receiver.                                        │
+╰────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Service Commands ─────────────────────────────────────────────────────────────────────╮
+│ service   Manage system service                                                        │
+╰────────────────────────────────────────────────────────────────────────────────────────╯
 
 ```
 
