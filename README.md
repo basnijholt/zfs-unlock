@@ -12,16 +12,16 @@ Unlock encrypted OpenZFS datasets over SSH, through a restricted receiver on the
 
 ## Why?
 
-This is the OpenZFS counterpart to [`truenas-unlock`](https://github.com/basnijholt/truenas-unlock).
-I built it after happily using `truenas-unlock`, then [switching my storage host from TrueNAS to NixOS](https://www.nijho.lt/post/truenas-to-nixos/).
-It includes optional NixOS modules for declarative setup, but Nix is not required to use the Python CLI or restricted SSH receiver.
+OpenZFS native encryption protects data at rest, but encrypted datasets still need their keys loaded after every reboot.
+The easy automation path is to store key files on the storage host, but that weakens the model: if the host is stolen, the attacker has both the encrypted data and the keys.
+`zfs-unlock` keeps those passphrases on a separate trusted machine and sends them only when it can reach a restricted SSH receiver on the ZFS host.
 
-ZFS native encryption is useful, but:
+There are two roles:
 
-1. **Storing keys on the encrypted storage host defeats the purpose**—if it's stolen, the thief has both the encrypted data and the keys
-2. **Manual unlocking is tedious**—after every reboot, you need to manually decrypt each dataset
+- the **unlock device** stores passphrases and runs `zfs-unlock unlock`, either once or as a daemon
+- the **ZFS host** runs a forced-command receiver that can only operate on explicitly allowed datasets
 
-This tool solves both problems with the same **"poor-man's second-factor"** setup as `truenas-unlock`:
+This gives you a practical second factor for storage unlocks:
 
 1. Run `zfs-unlock` on a **separate device** (Raspberry Pi, home server, etc.)
 2. Store encryption passphrases **only on that device**
@@ -37,6 +37,9 @@ Unlike a plain root SSH key, the receiver path is intentionally narrow:
 - a receiver parser that only accepts `status`, `unlock`, and `lock`
 
 Think of it as a hardware security key for your storage—hidden somewhere in your house, it automatically unlocks your datasets whenever your ZFS host boots. No manual intervention required.
+
+This project came from my own migration path: I happily used [`truenas-unlock`](https://github.com/basnijholt/truenas-unlock) on TrueNAS, then built this generic OpenZFS version after [switching my storage host from TrueNAS to NixOS](https://www.nijho.lt/post/truenas-to-nixos/).
+Nix is optional; the Python CLI and restricted SSH receiver work without Nix, while the included NixOS modules provide declarative setup when you want it.
 
 ## Table of Contents
 
@@ -194,6 +197,8 @@ zfs-unlock lock --force -D tank/photos
 
 `zfs-unlock lock` can fail with `Key unload error: '<dataset>' is busy` when a service still has files open on that dataset.
 Stop the service first, or use `--force` when you intentionally want to unmount the dataset and disrupt those processes.
+Even with `--force`, OpenZFS can refuse to unmount a dataset that is still held by NFS, SMB, client mounts, or kernel users.
+Unmount clients or stop exports first, then retry the lock.
 
 Bare `zfs-unlock` shows help and does not unlock anything.
 Use the explicit `unlock` subcommand for state-changing unlock operations.
@@ -283,7 +288,7 @@ uv run mypy zfs_unlock.py
 
 ## Credits
 
-Based on [`truenas-unlock`](https://github.com/basnijholt/truenas-unlock).
+Inspired by [`truenas-unlock`](https://github.com/basnijholt/truenas-unlock).
 
 ## License
 
