@@ -5,31 +5,50 @@
 [![Tests](https://github.com/basnijholt/zfs-unlock/actions/workflows/pytest.yml/badge.svg)](https://github.com/basnijholt/zfs-unlock/actions/workflows/pytest.yml)
 [![License](https://img.shields.io/github/license/basnijholt/zfs-unlock)](LICENSE)
 
-Unlock encrypted OpenZFS datasets over SSH without putting the passphrases on
-the NAS.
-
-This is the NixOS/OpenZFS version of
-[`truenas-unlock`](https://github.com/basnijholt/truenas-unlock). The client
-side is intentionally similar: same YAML config style, same daemon smart
-polling, same `status`, `lock`, and `service` commands. The TrueNAS API call is
-replaced by a restricted SSH receiver on the NAS.
+Unlock encrypted OpenZFS datasets over a restricted SSH receiver.
 
 ## Why?
 
-The goal is the same "poor-man's second factor" as `truenas-unlock`:
+This is the NixOS/OpenZFS counterpart to
+[`truenas-unlock`](https://github.com/basnijholt/truenas-unlock).
 
-1. Keep ZFS dataset passphrases on a separate device.
-2. Let the NAS boot without storing the unlock material locally.
-3. Unlock datasets only when the separate unlock device is on the network.
+ZFS native encryption is useful, but:
 
-A plain root SSH key would work, but it is too broad. `zfs-unlock` is designed
-for a narrower setup:
+1. **Storing keys on the NAS defeats the purpose**—if it's stolen, the thief has both the encrypted data and the keys
+2. **Manual unlocking is tedious**—after every reboot, you need to manually decrypt each dataset
 
-- SSH key restricted with `restrict`, `from=...`, and `command=...`
-- dedicated `zfs-unlock` SSH user
+This tool solves both problems with the same **"poor-man's second-factor"** setup as `truenas-unlock`:
+
+1. Run `zfs-unlock` on a **separate device** (Raspberry Pi, home server, etc.)
+2. Store encryption passphrases **only on that device**
+3. Datasets auto-unlock when both devices are on the network
+4. If the NAS is stolen, data remains encrypted and inaccessible
+
+Unlike a plain root SSH key, the NAS-side path is intentionally narrow:
+
+- a dedicated `zfs-unlock` SSH user
+- an SSH key restricted with `restrict`, `from=...`, and `command=...`
 - sudo permission only for a root-owned receiver wrapper
-- NAS-side dataset allowlist
-- receiver command parser that only accepts `status`, `unlock`, and `lock`
+- a NAS-side dataset allowlist
+- a receiver parser that only accepts `status`, `unlock`, and `lock`
+
+Think of it as a hardware security key for your storage—hidden somewhere in your house, it automatically unlocks your datasets whenever your NAS boots. No manual intervention required.
+
+## Table of Contents
+
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
+
+- [Install](#install)
+- [Setup](#setup)
+- [Usage](#usage)
+- [CLI](#cli)
+- [Running as a Service](#running-as-a-service)
+- [Development](#development)
+- [Credits](#credits)
+- [License](#license)
+
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
 ## Install
 
@@ -41,11 +60,7 @@ uv tool install zfs-unlock
 pip install zfs-unlock
 ```
 
-Install it on the off-box unlock device. The NAS also needs access to the
-`zfs-unlock receiver` command, usually through a NixOS package, `uv tool run`, or
-another immutable wrapper.
-
-## Client Setup
+## Setup
 
 Create `~/.config/zfs-unlock/config.yaml` on the off-box unlock device:
 
@@ -62,19 +77,11 @@ datasets:
 ```
 
 The `secrets` mode controls how values are interpreted:
+- **auto** (default): if file exists, read from it; otherwise use as literal
+- **files**: always treat values as file paths
+- **inline**: always treat values as literal secrets
 
-- `auto` (default): if a value is an existing file, read it; otherwise use it as
-  a literal passphrase
-- `files`: always treat values as file paths
-- `inline`: always treat values as literal passphrases
-
-## NAS Setup
-
-The receiver must run with enough privilege to call `zfs get`, `zfs load-key`,
-`zfs unload-key`, `zfs unmount`, and `zfs mount`. Do not give the unlock SSH key
-a general root shell. Use a forced command and a constrained sudo rule.
-
-Example NixOS shape:
+On the NAS, install a forced-command receiver. A NixOS setup can look like this:
 
 ```nix
 { pkgs, ... }:
@@ -126,13 +133,7 @@ in
 }
 ```
 
-The key point is that the SSH key can only execute the receiver wrapper. The
-receiver still checks the requested dataset against
-`/etc/zfs-unlock/allowed-datasets`.
-
-The extra `sshWrapper` avoids relying on `sudo` preserving
-`SSH_ORIGINAL_COMMAND`. It captures the SSH command before sudo and passes it to
-the root receiver as one argument.
+The wrapper captures `SSH_ORIGINAL_COMMAND` before `sudo` and passes it as one argument to the root receiver. The receiver still checks the requested dataset against `/etc/zfs-unlock/allowed-datasets`.
 
 ## Usage
 
@@ -141,74 +142,96 @@ the root receiver as one argument.
 zfs-unlock
 
 # Run as daemon
-# Checks every 1s if the NAS is unreachable, otherwise every 30s
+# (Checks every 1s if NAS is unreachable, otherwise every 30s)
 zfs-unlock --daemon
 
-# Custom interval for the relaxed state
+# Custom interval (for the "relaxed" state)
 zfs-unlock --daemon --interval 60
 
-# Show configured datasets without connecting
+# Dry run
 zfs-unlock --dry-run
+```
+
+## CLI
+
+```bash
+zfs-unlock --help
+```
+
+<!-- CODE:BASH:START -->
+<!-- export NO_COLOR=1 -->
+<!-- export TERM=dumb -->
+<!-- export TERMINAL_WIDTH=90 -->
+<!-- echo '```bash' -->
+<!-- zfs-unlock --help -->
+<!-- echo '```' -->
+<!-- CODE:END -->
+
+<!-- OUTPUT:START -->
+<!-- ⚠️ This content is auto-generated by `markdown-code-runner`. -->
+```bash
+
+ Usage: zfs-unlock [OPTIONS] COMMAND [ARGS]...
+
+ Unlock OpenZFS datasets over a restricted SSH receiver
+
+╭─ Options ──────────────────────────────────────────────────────────────────────────────╮
+│ --config    -c      PATH     Config file path                                          │
+│ --dry-run   -n               Show what would be done                                   │
+│ --daemon    -d               Run continuously                                          │
+│ --interval  -i      INTEGER  Seconds between checks (1s if unreachable) [default: 30]  │
+│ --dataset   -D      TEXT     Filter by dataset path                                    │
+│ --version   -v               Show version and exit                                     │
+│ --help      -h               Show this message and exit.                               │
+╰────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Commands ─────────────────────────────────────────────────────────────────────────────╮
+│ lock      Lock configured datasets.                                                    │
+│ status    Show lock status of configured datasets.                                     │
+│ receiver  Run the restricted NAS-side receiver.                                        │
+│ service   Manage system service                                                        │
+╰────────────────────────────────────────────────────────────────────────────────────────╯
+
+```
+
+<!-- OUTPUT:END -->
+
+## Running as a Service
+
+Requires [uv](https://docs.astral.sh/uv/) to be installed. Auto-detects Linux (systemd) or macOS (launchd):
+
+```bash
+# Install and start
+zfs-unlock service install
 
 # Check status
-zfs-unlock status
-
-# Lock datasets
-zfs-unlock lock --force
-
-# Limit any command to matching dataset paths
-zfs-unlock --dataset photos
-zfs-unlock status --dataset tank/photos
-```
-
-## Running As A Service
-
-Requires `uv` to be installed. Auto-detects Linux systemd user services or macOS
-launchd:
-
-```bash
-zfs-unlock service install
 zfs-unlock service status
+
+# View logs (follows by default)
 zfs-unlock service logs
+
+# Uninstall
 zfs-unlock service uninstall
 ```
-
-On Linux, enable linger if the service should run before the user logs in:
-
-```bash
-sudo loginctl enable-linger "$USER"
-```
-
-## Receiver Command
-
-The client sends one of these SSH commands:
-
-```bash
-status tank/photos
-unlock tank/photos
-lock tank/photos --force
-```
-
-When `unlock` is requested, the passphrase is sent on SSH stdin. The receiver
-runs:
-
-```bash
-zfs load-key -L prompt tank/photos
-zfs mount -a
-```
-
-`zfs mount -a` is best effort; unlock success does not depend on every dataset
-mounting cleanly.
 
 ## Development
 
 ```bash
+# Clone and install
+git clone https://github.com/basnijholt/zfs-unlock
+cd zfs-unlock
 uv sync --dev
+
+# Run tests
 uv run pytest
+
+# Run lints
 uv run ruff check .
-uv run ruff format --check .
 uv run mypy zfs_unlock.py
 ```
+
+## Credits
+
+Based on [`truenas-unlock`](https://github.com/basnijholt/truenas-unlock).
 
 ## License
 

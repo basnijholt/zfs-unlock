@@ -12,7 +12,7 @@ classifiers = [
     "Environment :: Console",
     "Intended Audience :: System Administrators",
     "License :: OSI Approved :: MIT License",
-    "Operating System :: POSIX :: Linux",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -58,21 +58,17 @@ dev = [
 [tool.ruff]
 line-length = 120
 target-version = "py311"
-extend-exclude = ["_version.py"]
 
 [tool.ruff.lint]
 select = ["ALL"]
 ignore = [
-    "COM812",  # Conflicts with ruff format
-    "D203",    # Conflicts with D211
-    "D213",    # Conflicts with D212
     "T20",
     "S101",
     "S603",
     "ANN401",
     "PLR0913",
-    "FBT002",
-    "S106",
+    "FBT002",  # Boolean-typed keyword-only argument in function definition
+    "S106",    # Possible hardcoded password assigned to argument
 ]
 
 [tool.mypy]
