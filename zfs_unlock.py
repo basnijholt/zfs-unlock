@@ -68,7 +68,7 @@ Wants=network-online.target
 
 [Service]
 Environment="PATH={path}"
-ExecStart={uv_path} tool run zfs-unlock --daemon
+ExecStart={uv_path} tool run zfs-unlock unlock --daemon
 Restart=on-failure
 RestartSec=10
 
@@ -90,6 +90,7 @@ LAUNCHD_PLIST = """\
     <string>tool</string>
     <string>run</string>
     <string>zfs-unlock</string>
+    <string>unlock</string>
     <string>--daemon</string>
   </array>
   <key>RunAtLoad</key>
@@ -937,6 +938,46 @@ def _load_config(config_path: Path | None) -> tuple[Path, Config]:
 
 
 @app.command()
+def unlock(
+    config_path: Annotated[Path | None, typer.Option("--config", "-c", help="Config file path")] = None,
+    dry_run: Annotated[bool, typer.Option("--dry-run", "-n", help="Show what would be done")] = False,
+    daemon: Annotated[bool, typer.Option("--daemon", "-d", help="Run continuously")] = False,
+    interval: Annotated[int, typer.Option("--interval", "-i", help="Seconds between checks (1s if unreachable)")] = 30,
+    dataset: Annotated[list[str] | None, typer.Option("--dataset", "-D", help="Filter by dataset path")] = None,
+) -> None:
+    """Unlock configured datasets."""
+    config_path, config = _load_config(config_path)
+    console.print(f"[dim]{config_path}[/dim]")
+
+    if daemon:
+        console.print(f"[bold]Running with smart polling (interval: {interval}s)[/bold]")
+        current_interval = interval
+        last_success = True
+
+        while True:
+            try:
+                success = asyncio.run(run_unlock(config, dry_run=dry_run, quiet=True, dataset_filters=dataset))
+                if success:
+                    if not last_success:
+                        console.print("[green]Connection restored.[/green]")
+                    current_interval = interval
+                else:
+                    if last_success:
+                        console.print(
+                            "[yellow]Connection lost/unstable. Switching to panic mode (1s interval).[/yellow]",
+                        )
+                    current_interval = 1
+
+                last_success = success
+                time.sleep(current_interval)
+            except KeyboardInterrupt:
+                console.print("\n[bold]Stopped[/bold]")
+                break
+    else:
+        asyncio.run(run_unlock(config, dry_run=dry_run, dataset_filters=dataset))
+
+
+@app.command()
 def lock(
     config_path: Annotated[Path | None, typer.Option("--config", "-c", help="Config file path")] = None,
     force: Annotated[bool, typer.Option("--force", "-f", help="Force unmount before locking")] = False,
@@ -991,11 +1032,6 @@ def receiver(
 @app.callback(invoke_without_command=True)
 def main(
     ctx: typer.Context,
-    config_path: Annotated[Path | None, typer.Option("--config", "-c", help="Config file path")] = None,
-    dry_run: Annotated[bool, typer.Option("--dry-run", "-n", help="Show what would be done")] = False,
-    daemon: Annotated[bool, typer.Option("--daemon", "-d", help="Run continuously")] = False,
-    interval: Annotated[int, typer.Option("--interval", "-i", help="Seconds between checks (1s if unreachable)")] = 30,
-    dataset: Annotated[list[str] | None, typer.Option("--dataset", "-D", help="Filter by dataset path")] = None,
     version: Annotated[  # noqa: ARG001
         bool | None,
         typer.Option("--version", "-v", help="Show version and exit", callback=_version_callback, is_eager=True),
@@ -1004,36 +1040,7 @@ def main(
     """Unlock encrypted OpenZFS datasets."""
     if ctx.invoked_subcommand is not None:
         return
-
-    config_path, config = _load_config(config_path)
-    console.print(f"[dim]{config_path}[/dim]")
-
-    if daemon:
-        console.print(f"[bold]Running with smart polling (interval: {interval}s)[/bold]")
-        current_interval = interval
-        last_success = True
-
-        while True:
-            try:
-                success = asyncio.run(run_unlock(config, dry_run=dry_run, quiet=True, dataset_filters=dataset))
-                if success:
-                    if not last_success:
-                        console.print("[green]Connection restored.[/green]")
-                    current_interval = interval
-                else:
-                    if last_success:
-                        console.print(
-                            "[yellow]Connection lost/unstable. Switching to panic mode (1s interval).[/yellow]",
-                        )
-                    current_interval = 1
-
-                last_success = success
-                time.sleep(current_interval)
-            except KeyboardInterrupt:
-                console.print("\n[bold]Stopped[/bold]")
-                break
-    else:
-        asyncio.run(run_unlock(config, dry_run=dry_run, dataset_filters=dataset))
+    console.print(ctx.get_help())
 
 
 if __name__ == "__main__":
