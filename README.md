@@ -83,59 +83,46 @@ The `secrets` mode controls how values are interpreted:
 - **files**: always treat values as file paths
 - **inline**: always treat values as literal secrets
 
-On the NAS, install a forced-command receiver. A NixOS setup can look like this:
+On the NAS, enable the forced-command receiver. With flakes, add `zfs-unlock`
+as an input and include its NixOS module in the NAS module list:
 
 ```nix
-{ pkgs, ... }:
-
-let
-  zfsUnlock = pkgs.writeShellScriptBin "zfs-unlock" ''
-    exec ${pkgs.uv}/bin/uv tool run zfs-unlock "$@"
-  '';
-
-  receiver = pkgs.writeShellScript "zfs-unlock-receiver" ''
-    exec ${zfsUnlock}/bin/zfs-unlock receiver \
-      --allow-file /etc/zfs-unlock/allowed-datasets "$@"
-  '';
-
-  sshWrapper = pkgs.writeShellScript "zfs-unlock-ssh-wrapper" ''
-    set -eu
-    exec ${pkgs.sudo}/bin/sudo -n ${receiver} "$SSH_ORIGINAL_COMMAND"
-  '';
-in
 {
-  users.groups.zfs-unlock = {};
+  inputs.zfs-unlock.url = "github:basnijholt/zfs-unlock";
 
-  users.users.zfs-unlock = {
-    isSystemUser = true;
-    group = "zfs-unlock";
-    home = "/var/lib/zfs-unlock";
-    createHome = true;
-    openssh.authorizedKeys.keys = [
-      ''restrict,from="192.168.1.50",command="${sshWrapper}" ssh-ed25519 AAAA... unlock-device''
-    ];
-  };
-
-  security.sudo.extraRules = [
-    {
-      users = [ "zfs-unlock" ];
-      commands = [
-        {
-          command = "${receiver}";
-          options = [ "NOPASSWD" ];
-        }
+  outputs = { nixpkgs, zfs-unlock, ... }: {
+    nixosConfigurations.nas = nixpkgs.lib.nixosSystem {
+      system = "x86_64-linux";
+      modules = [
+        zfs-unlock.nixosModules.receiver
+        ./hosts/nas/default.nix
       ];
-    }
-  ];
-
-  environment.etc."zfs-unlock/allowed-datasets".text = ''
-    tank/syncthing
-    tank/photos
-  '';
+    };
+  };
 }
 ```
 
-The wrapper captures `SSH_ORIGINAL_COMMAND` before `sudo` and passes it as one argument to the root receiver. The receiver still checks the requested dataset against `/etc/zfs-unlock/allowed-datasets`.
+Then configure only the receiver policy on the NAS:
+
+```nix
+{
+  services.zfsUnlock.receiver = {
+    enable = true;
+    allowedFrom = [ "192.168.1.50" ];
+    authorizedKeys = [
+      "ssh-ed25519 AAAA... unlock-device"
+    ];
+    datasets = [
+      "tank/syncthing"
+      "tank/photos"
+    ];
+  };
+}
+```
+
+The module creates the `zfs-unlock` SSH user, forced command, sudo rule,
+receiver wrapper, and `/etc/zfs-unlock/allowed-datasets`. The receiver still
+checks each requested dataset against that allowlist.
 
 ## Usage
 
@@ -177,22 +164,21 @@ zfs-unlock --help
 
  Unlock OpenZFS datasets over a restricted SSH receiver
 
-╭─ Options ────────────────────────────────────────────────────────────────────╮
-│ --config    -c      PATH     Config file path                                │
-│ --dry-run   -n               Show what would be done                         │
-│ --daemon    -d               Run continuously                                │
-│ --interval  -i      INTEGER  Seconds between checks (1s if unreachable)      │
-│                              [default: 30]                                   │
-│ --dataset   -D      TEXT     Filter by dataset path                          │
-│ --version   -v               Show version and exit                           │
-│ --help      -h               Show this message and exit.                     │
-╰──────────────────────────────────────────────────────────────────────────────╯
-╭─ Commands ───────────────────────────────────────────────────────────────────╮
-│ lock      Lock configured datasets.                                          │
-│ status    Show lock status of configured datasets.                           │
-│ receiver  Run the restricted NAS-side receiver.                              │
-│ service   Manage system service                                              │
-╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ Options ──────────────────────────────────────────────────────────────────────────────╮
+│ --config    -c      PATH     Config file path                                          │
+│ --dry-run   -n               Show what would be done                                   │
+│ --daemon    -d               Run continuously                                          │
+│ --interval  -i      INTEGER  Seconds between checks (1s if unreachable) [default: 30]  │
+│ --dataset   -D      TEXT     Filter by dataset path                                    │
+│ --version   -v               Show version and exit                                     │
+│ --help      -h               Show this message and exit.                               │
+╰────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Commands ─────────────────────────────────────────────────────────────────────────────╮
+│ lock      Lock configured datasets.                                                    │
+│ status    Show lock status of configured datasets.                                     │
+│ receiver  Run the restricted NAS-side receiver.                                        │
+│ service   Manage system service                                                        │
+╰────────────────────────────────────────────────────────────────────────────────────────╯
 
 ```
 

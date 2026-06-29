@@ -737,6 +737,10 @@ def receiver(
         Path,
         typer.Option("--allow-file", help="File containing allowed dataset names"),
     ] = Path("/etc/zfs-unlock/allowed-datasets"),
+    zfs_path: Annotated[
+        str,
+        typer.Option("--zfs-path", help="Path to the zfs executable"),
+    ] = "zfs",
 ) -> None:
     """Run the restricted NAS-side receiver."""
     args = list(ctx.args)
@@ -746,7 +750,7 @@ def receiver(
         original_command = os.environ.get("SSH_ORIGINAL_COMMAND", "")
         args = parse_receiver_command(original_command) if original_command else []
 
-    response = Receiver(allow_file=allow_file).handle(args, stdin_text=sys.stdin.read())
+    response = Receiver(allow_file=allow_file, zfs_path=zfs_path).handle(args, stdin_text=sys.stdin.read())
     if response.stdout:
         sys.stdout.write(response.stdout)
     if response.stderr:
