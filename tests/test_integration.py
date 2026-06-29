@@ -32,7 +32,7 @@ class RecordingRunner:
 def test_run_unlock_unlocks_only_locked_datasets() -> None:
     """run_unlock unlocks locked datasets and skips available ones."""
     config = Config(
-        host="nas.local",
+        host="zfs-host.example.lan",
         datasets=[
             Dataset(path="tank/locked", secret="pass1"),
             Dataset(path="tank/open", secret="pass2"),
@@ -58,7 +58,7 @@ def test_run_unlock_unlocks_only_locked_datasets() -> None:
 def test_run_unlock_returns_false_when_any_status_fails() -> None:
     """run_unlock returns False when a dataset status check fails."""
     config = Config(
-        host="nas.local",
+        host="zfs-host.example.lan",
         datasets=[
             Dataset(path="tank/locked", secret="pass1"),
             Dataset(path="tank/open", secret="pass2"),
@@ -75,7 +75,7 @@ def test_run_unlock_returns_false_when_any_status_fails() -> None:
 def test_run_lock_locks_only_unlocked_datasets() -> None:
     """run_lock skips already locked datasets."""
     config = Config(
-        host="nas.local",
+        host="zfs-host.example.lan",
         datasets=[
             Dataset(path="tank/open", secret="pass1"),
             Dataset(path="tank/locked", secret="pass2"),
@@ -99,7 +99,7 @@ def test_run_lock_locks_only_unlocked_datasets() -> None:
 def test_run_status_checks_all_matching_datasets() -> None:
     """run_status checks all datasets that match the filter."""
     config = Config(
-        host="nas.local",
+        host="zfs-host.example.lan",
         datasets=[
             Dataset(path="tank/photos", secret="pass1"),
             Dataset(path="tank/media", secret="pass2"),

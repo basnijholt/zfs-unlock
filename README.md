@@ -8,7 +8,7 @@
 <img src="docs/logo.svg" alt="ZFS Unlock Logo" align="right" width="120" />
 
 Unlock encrypted OpenZFS datasets over SSH,
-through a restricted NAS-side receiver,
+through a restricted receiver on the ZFS host,
 with passphrases kept on a separate trusted machine.
 
 ## Why?
@@ -18,7 +18,7 @@ This is the NixOS/OpenZFS counterpart to
 
 ZFS native encryption is useful, but:
 
-1. **Storing keys on the NAS defeats the purpose**—if it's stolen, the thief has both the encrypted data and the keys
+1. **Storing keys on the encrypted storage host defeats the purpose**—if it's stolen, the thief has both the encrypted data and the keys
 2. **Manual unlocking is tedious**—after every reboot, you need to manually decrypt each dataset
 
 This tool solves both problems with the same **"poor-man's second-factor"** setup as `truenas-unlock`:
@@ -26,17 +26,17 @@ This tool solves both problems with the same **"poor-man's second-factor"** setu
 1. Run `zfs-unlock` on a **separate device** (Raspberry Pi, home server, etc.)
 2. Store encryption passphrases **only on that device**
 3. Datasets auto-unlock when both devices are on the network
-4. If the NAS is stolen, data remains encrypted and inaccessible
+4. If the storage host is stolen, data remains encrypted and inaccessible
 
-Unlike a plain root SSH key, the NAS-side path is intentionally narrow:
+Unlike a plain root SSH key, the receiver path is intentionally narrow:
 
 - a dedicated `zfs-unlock` SSH user
 - an SSH key restricted with `restrict`, `from=...`, and `command=...`
 - sudo permission only for a root-owned receiver wrapper
-- a NAS-side dataset allowlist
+- a receiver-side dataset allowlist
 - a receiver parser that only accepts `status`, `unlock`, and `lock`
 
-Think of it as a hardware security key for your storage—hidden somewhere in your house, it automatically unlocks your datasets whenever your NAS boots. No manual intervention required.
+Think of it as a hardware security key for your storage—hidden somewhere in your house, it automatically unlocks your datasets whenever your ZFS host boots. No manual intervention required.
 
 ## Table of Contents
 
@@ -69,16 +69,16 @@ pip install zfs-unlock
 Generate a dedicated SSH key on the off-box unlock device:
 
 ```bash
-zfs-unlock keygen --identity-file ~/.ssh/zfs-unlock-nas --comment pi4-zfs-unlock
+zfs-unlock keygen --identity-file ~/.ssh/zfs-unlock-receiver --comment pi4-zfs-unlock
 ```
 
-Add the printed public key to the NAS-side `authorizedKeys` list below, then
+Add the printed public key to the receiver host's `authorizedKeys` list below, then
 create `~/.config/zfs-unlock/config.yaml` on the off-box unlock device:
 
 ```yaml
-host: nas.local
+host: zfs-host.example.lan
 user: zfs-unlock
-identity_file: ~/.ssh/zfs-unlock-nas
+identity_file: ~/.ssh/zfs-unlock-receiver
 # command_timeout: 30
 
 # secrets: auto  # auto (default) | files | inline
@@ -93,26 +93,27 @@ The `secrets` mode controls how values are interpreted:
 - **files**: always treat values as file paths
 - **inline**: always treat values as literal secrets
 
-On the NAS, enable the forced-command receiver. With flakes, add `zfs-unlock`
-as an input and include its NixOS module in the NAS module list:
+On the ZFS host, enable the forced-command receiver. With flakes, add
+`zfs-unlock` as an input and include its NixOS module in the receiver host's
+module list:
 
 ```nix
 {
   inputs.zfs-unlock.url = "github:basnijholt/zfs-unlock";
 
   outputs = { nixpkgs, zfs-unlock, ... }: {
-    nixosConfigurations.nas = nixpkgs.lib.nixosSystem {
+    nixosConfigurations.storage = nixpkgs.lib.nixosSystem {
       system = "x86_64-linux";
       modules = [
         zfs-unlock.nixosModules.receiver
-        ./hosts/nas/default.nix
+        ./hosts/storage/default.nix
       ];
     };
   };
 }
 ```
 
-Then configure only the receiver policy on the NAS:
+Then configure only the receiver policy on the ZFS host:
 
 ```nix
 {
@@ -155,7 +156,7 @@ packaged `zfs-unlock` executable, installs that CLI into the system profile,
 adds OpenSSH to the service `PATH`, and sets `HOME`/`XDG_CONFIG_HOME` so the
 normal user config is found.
 
-After rebuilding the NAS, verify the client and receiver path:
+After rebuilding the receiver host, verify the client and receiver path:
 
 ```bash
 zfs-unlock doctor
@@ -171,7 +172,7 @@ dataset secrets are private to the local user.
 zfs-unlock unlock
 
 # Run as daemon
-# (Checks every 1s if NAS is unreachable, otherwise every 30s)
+# (Checks every 1s if the receiver host is unreachable, otherwise every 30s)
 zfs-unlock unlock --daemon
 
 # Custom interval (for the "relaxed" state)
@@ -224,26 +225,25 @@ zfs-unlock --help
 
  Unlock OpenZFS datasets over a restricted SSH receiver
 
-╭─ Options ────────────────────────────────────────────────────────────────────╮
-│ --version  -v        Show version and exit                                   │
-│ --help     -h        Show this message and exit.                             │
-╰──────────────────────────────────────────────────────────────────────────────╯
-╭─ Client Commands ────────────────────────────────────────────────────────────╮
-│ unlock    Unlock configured datasets.                                        │
-│ lock      Lock configured datasets.                                          │
-│ status    Show lock status of configured datasets.                           │
-│ doctor    Check client config, SSH key, host reachability, and receiver      │
-│           status.                                                            │
-╰──────────────────────────────────────────────────────────────────────────────╯
-╭─ Setup Commands ─────────────────────────────────────────────────────────────╮
-│ keygen    Generate a dedicated SSH key for zfs-unlock.                       │
-╰──────────────────────────────────────────────────────────────────────────────╯
-╭─ Receiver Commands ──────────────────────────────────────────────────────────╮
-│ receiver  Run the restricted NAS-side receiver.                              │
-╰──────────────────────────────────────────────────────────────────────────────╯
-╭─ Service Commands ───────────────────────────────────────────────────────────╮
-│ service   Manage system service                                              │
-╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ Options ──────────────────────────────────────────────────────────────────────────────╮
+│ --version  -v        Show version and exit                                             │
+│ --help     -h        Show this message and exit.                                       │
+╰────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Client Commands ──────────────────────────────────────────────────────────────────────╮
+│ unlock    Unlock configured datasets.                                                  │
+│ lock      Lock configured datasets.                                                    │
+│ status    Show lock status of configured datasets.                                     │
+│ doctor    Check client config, SSH key, host reachability, and receiver status.        │
+╰────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Setup Commands ───────────────────────────────────────────────────────────────────────╮
+│ keygen    Generate a dedicated SSH key for zfs-unlock.                                 │
+╰────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Receiver Commands ────────────────────────────────────────────────────────────────────╮
+│ receiver  Run the restricted receiver.                                                 │
+╰────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Service Commands ─────────────────────────────────────────────────────────────────────╮
+│ service   Manage system service                                                        │
+╰────────────────────────────────────────────────────────────────────────────────────────╯
 
 ```
 
