@@ -224,19 +224,20 @@ zfs-unlock --help
 
  Unlock OpenZFS datasets over a restricted SSH receiver
 
-╭─ Options ──────────────────────────────────────────────────────────────────────────────╮
-│ --version  -v        Show version and exit                                             │
-│ --help     -h        Show this message and exit.                                       │
-╰────────────────────────────────────────────────────────────────────────────────────────╯
-╭─ Commands ─────────────────────────────────────────────────────────────────────────────╮
-│ keygen    Generate a dedicated SSH key for zfs-unlock.                                 │
-│ doctor    Check client config, SSH key, host reachability, and receiver status.        │
-│ unlock    Unlock configured datasets.                                                  │
-│ lock      Lock configured datasets.                                                    │
-│ status    Show lock status of configured datasets.                                     │
-│ receiver  Run the restricted NAS-side receiver.                                        │
-│ service   Manage system service                                                        │
-╰────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Options ────────────────────────────────────────────────────────────────────╮
+│ --version  -v        Show version and exit                                   │
+│ --help     -h        Show this message and exit.                             │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ Commands ───────────────────────────────────────────────────────────────────╮
+│ keygen    Generate a dedicated SSH key for zfs-unlock.                       │
+│ doctor    Check client config, SSH key, host reachability, and receiver      │
+│           status.                                                            │
+│ unlock    Unlock configured datasets.                                        │
+│ lock      Lock configured datasets.                                          │
+│ status    Show lock status of configured datasets.                           │
+│ receiver  Run the restricted NAS-side receiver.                              │
+│ service   Manage system service                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
 
 ```
 
