@@ -1,5 +1,9 @@
 # ZFS Unlock
 
+<p align="center">
+  <img src="docs/logo.svg" alt="ZFS Unlock logo" width="180">
+</p>
+
 [![PyPI](https://img.shields.io/pypi/v/zfs-unlock)](https://pypi.org/project/zfs-unlock/)
 [![Python](https://img.shields.io/pypi/pyversions/zfs-unlock)](https://pypi.org/project/zfs-unlock/)
 [![Tests](https://github.com/basnijholt/zfs-unlock/actions/workflows/pytest.yml/badge.svg)](https://github.com/basnijholt/zfs-unlock/actions/workflows/pytest.yml)
