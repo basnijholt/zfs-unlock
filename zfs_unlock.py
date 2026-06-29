@@ -393,7 +393,7 @@ class ZfsUnlockClient:
             f"ConnectTimeout={self.config.connect_timeout}",
         ]
         if self.config.identity_file is not None:
-            args.extend(["-i", str(self.config.identity_file.expanduser())])
+            args.extend(["-o", "IdentitiesOnly=yes", "-i", str(self.config.identity_file.expanduser())])
         args.extend([f"{self.config.user}@{self.config.host}", shlex.join(remote_args)])
         return args
 
@@ -602,6 +602,16 @@ def _check_identity_file(identity_file: Path | None) -> bool:
     return True
 
 
+def _check_ssh_executable() -> bool:
+    ssh_path = shutil.which("ssh")
+    if ssh_path is None:
+        _check_fail("ssh executable missing from PATH")
+        return False
+
+    _check_ok(f"ssh executable exists: {ssh_path}")
+    return True
+
+
 def _check_host_reachable(config: Config) -> bool:
     ok = True
     try:
@@ -624,27 +634,41 @@ def _check_host_reachable(config: Config) -> bool:
     return ok
 
 
-def _select_doctor_dataset(datasets: list[Dataset], dataset: str | None) -> Dataset | None:
+def _select_doctor_datasets(datasets: list[Dataset], dataset: str | None) -> list[Dataset]:
     if dataset is None:
-        return datasets[0] if datasets else None
+        return datasets
 
     for configured in datasets:
         if configured.path == dataset:
-            return configured
+            return [configured]
 
     _check_fail(f"dataset not configured: {dataset}")
     raise typer.Exit(1)
 
 
-async def _check_receiver_status(config: Config, dataset: Dataset) -> bool:
+async def _check_receiver_status(client: ZfsUnlockClient, dataset: Dataset) -> bool:
     console.print(f"[dim]checking receiver status: {dataset.path}[/dim]", soft_wrap=True)
-    result = await ZfsUnlockClient(config).run_remote(["status", dataset.path])
-    if result.returncode == 0:
-        _check_ok(f"receiver status ok: {dataset.path} -> {result.stdout.strip()}")
+    result = await client.run_remote(["status", dataset.path])
+    if result.returncode != 0:
+        _check_fail(f"receiver status failed: {dataset.path}: {result.stderr.strip()}")
+        return False
+
+    status = result.stdout.strip()
+    if status in {"locked", "unlocked"}:
+        _check_ok(f"receiver status ok: {dataset.path} -> {status}")
         return True
 
-    _check_fail(f"receiver status failed: {result.stderr.strip()}")
+    _check_fail(f"receiver status unexpected: {dataset.path} -> {status}")
     return False
+
+
+async def _check_receiver_statuses(config: Config, datasets: list[Dataset]) -> bool:
+    client = ZfsUnlockClient(config)
+    ok = True
+    for dataset in datasets:
+        if not await _check_receiver_status(client, dataset):
+            ok = False
+    return ok
 
 
 @app.command()
@@ -692,10 +716,13 @@ def doctor(
     if not _check_identity_file(config.identity_file):
         raise typer.Exit(1)
 
+    if not _check_ssh_executable():
+        raise typer.Exit(1)
+
     ok = _check_host_reachable(config)
-    check_dataset = _select_doctor_dataset(config.datasets, dataset)
-    if ok and check_dataset is not None:
-        ok = asyncio.run(_check_receiver_status(config, check_dataset))
+    check_datasets = _select_doctor_datasets(config.datasets, dataset)
+    if ok and check_datasets:
+        ok = asyncio.run(_check_receiver_statuses(config, check_datasets))
     raise typer.Exit(0 if ok else 1)
 
 

@@ -63,6 +63,8 @@ def test_run_remote_builds_ssh_command_with_identity_file(tmp_path: Path) -> Non
                 "BatchMode=yes",
                 "-o",
                 "ConnectTimeout=5",
+                "-o",
+                "IdentitiesOnly=yes",
                 "-i",
                 str(identity_file),
                 "unlocker@nas.local",

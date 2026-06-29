@@ -241,6 +241,84 @@ def test_doctor_checks_receiver_status(tmp_path: Path) -> None:
     assert "receiver status ok" in result.stdout
 
 
+def test_doctor_reports_missing_ssh_executable(tmp_path: Path) -> None:
+    """Doctor reports when ssh is unavailable in the current environment."""
+    config_file = tmp_path / "config.yaml"
+    key = tmp_path / "zfs-unlock-nas"
+    key.write_text("secret")
+    config_file.write_text(f"host: 192.0.2.1\nidentity_file: {key}\ndatasets:\n  tank/ds: pass")
+
+    with (
+        patch("shutil.which", return_value=None),
+        patch("socket.getaddrinfo", return_value=[object()]),
+        patch("socket.create_connection") as create_connection,
+        patch("zfs_unlock.ZfsUnlockClient") as client_cls,
+    ):
+        create_connection.return_value.__enter__.return_value = object()
+        client_cls.return_value.run_remote = AsyncMock(
+            return_value=MagicMock(returncode=0, stdout="locked\n", stderr=""),
+        )
+        result = runner.invoke(app, ["doctor", "--config", str(config_file)])
+
+    assert result.exit_code == 1
+    assert "ssh executable missing" in result.stdout
+    client_cls.return_value.run_remote.assert_not_called()
+
+
+def test_doctor_checks_all_configured_datasets(tmp_path: Path) -> None:
+    """Doctor checks every configured dataset by default."""
+    config_file = tmp_path / "config.yaml"
+    key = tmp_path / "zfs-unlock-nas"
+    key.write_text("secret")
+    config_file.write_text(
+        f"host: 192.0.2.1\nidentity_file: {key}\ndatasets:\n  tank/one: pass\n  tank/two: pass",
+    )
+
+    with (
+        patch("socket.getaddrinfo", return_value=[object()]),
+        patch("socket.create_connection") as create_connection,
+        patch("zfs_unlock.ZfsUnlockClient") as client_cls,
+    ):
+        create_connection.return_value.__enter__.return_value = object()
+        client_cls.return_value.run_remote = AsyncMock(
+            side_effect=[
+                MagicMock(returncode=0, stdout="locked\n", stderr=""),
+                MagicMock(returncode=0, stdout="unlocked\n", stderr=""),
+            ],
+        )
+        result = runner.invoke(app, ["doctor", "--config", str(config_file)])
+
+    assert result.exit_code == 0
+    assert client_cls.return_value.run_remote.call_args_list == [
+        ((["status", "tank/one"],),),
+        ((["status", "tank/two"],),),
+    ]
+    assert "checking receiver status: tank/one" in result.stdout
+    assert "checking receiver status: tank/two" in result.stdout
+
+
+def test_doctor_fails_unknown_receiver_status(tmp_path: Path) -> None:
+    """Doctor fails when a receiver reports an unclassified dataset status."""
+    config_file = tmp_path / "config.yaml"
+    key = tmp_path / "zfs-unlock-nas"
+    key.write_text("secret")
+    config_file.write_text(f"host: 192.0.2.1\nidentity_file: {key}\ndatasets:\n  tank/plain: pass")
+
+    with (
+        patch("socket.getaddrinfo", return_value=[object()]),
+        patch("socket.create_connection") as create_connection,
+        patch("zfs_unlock.ZfsUnlockClient") as client_cls,
+    ):
+        create_connection.return_value.__enter__.return_value = object()
+        client_cls.return_value.run_remote = AsyncMock(
+            return_value=MagicMock(returncode=0, stdout="unknown\n", stderr=""),
+        )
+        result = runner.invoke(app, ["doctor", "--config", str(config_file)])
+
+    assert result.exit_code == 1
+    assert "receiver status unexpected: tank/plain -> unknown" in result.stdout
+
+
 def test_keygen_creates_unlock_key(tmp_path: Path) -> None:
     """Keygen creates an ed25519 key and prints the public key."""
     key_path = tmp_path / "zfs-unlock-nas"
