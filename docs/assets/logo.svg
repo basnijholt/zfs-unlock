@@ -40,16 +40,7 @@
         attributeName="transform"
         type="translate"
         dur="5.8s"
-        values="0 0; 0 0; -8 -22; -8 -22; 0 0; 0 0"
-        keyTimes="0; 0.34; 0.48; 0.72; 0.86; 1"
-        repeatCount="indefinite"
-      />
-      <animateTransform
-        attributeName="transform"
-        type="rotate"
-        additive="sum"
-        dur="5.8s"
-        values="0 178 238; 0 178 238; -9 178 238; -9 178 238; 0 178 238; 0 178 238"
+        values="0 0; 0 0; 0 -26; 0 -26; 0 0; 0 0"
         keyTimes="0; 0.34; 0.48; 0.72; 0.86; 1"
         repeatCount="indefinite"
       />
