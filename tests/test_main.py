@@ -119,10 +119,16 @@ def test_receiver_unlock_skips_already_available_key(tmp_path: Path) -> None:
     ]
 
 
-def test_receiver_lock_force_unmounts_then_unloads_key(tmp_path: Path) -> None:
-    """Forced lock unmounts recursively before unloading the key."""
+def test_receiver_lock_force_unmounts_descendants_then_unloads_key(tmp_path: Path) -> None:
+    """Forced lock unmounts mounted descendants before unloading the key."""
     allow_file = write_allowlist(tmp_path, "tank/photos")
     runner = RecordingLocalRunner(
+        CommandResult(
+            returncode=0,
+            stdout="tank/photos\tyes\ntank/photos/raw\tyes\ntank/photos/cache\tno\n",
+            stderr="",
+        ),
+        CommandResult(returncode=0, stdout="", stderr=""),
         CommandResult(returncode=0, stdout="", stderr=""),
         CommandResult(returncode=0, stdout="", stderr=""),
     )
@@ -133,6 +139,23 @@ def test_receiver_lock_force_unmounts_then_unloads_key(tmp_path: Path) -> None:
     assert response.returncode == 0
     assert response.stdout == "locked tank/photos\n"
     assert runner.calls == [
-        (["zfs", "unmount", "-f", "-r", "tank/photos"], None),
+        (["zfs", "list", "-H", "-o", "name,mounted", "-r", "tank/photos"], None),
+        (["zfs", "unmount", "-f", "tank/photos/raw"], None),
+        (["zfs", "unmount", "-f", "tank/photos"], None),
         (["zfs", "unload-key", "-r", "tank/photos"], None),
+    ]
+
+
+def test_receiver_lock_force_stops_when_descendant_listing_fails(tmp_path: Path) -> None:
+    """Forced lock does not unload keys after a failed descendant listing."""
+    allow_file = write_allowlist(tmp_path, "tank/photos")
+    runner = RecordingLocalRunner(CommandResult(returncode=1, stdout="", stderr="list failed\n"))
+    receiver = Receiver(allow_file=allow_file, runner=runner)
+
+    response = receiver.handle(["lock", "tank/photos", "--force"], stdin_text="")
+
+    assert response.returncode == 1
+    assert response.stderr == "list failed\n"
+    assert runner.calls == [
+        (["zfs", "list", "-H", "-o", "name,mounted", "-r", "tank/photos"], None),
     ]
