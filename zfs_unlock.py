@@ -358,14 +358,44 @@ class Receiver:
         self.runner.run([self.zfs_path, "mount", "-a"])
         return CommandResult(returncode=0, stdout=f"unlocked {dataset}\n", stderr="")
 
+    def _mounted_datasets(self, dataset: str) -> list[str] | CommandResult:
+        listed = self.runner.run([self.zfs_path, "list", "-H", "-o", "name,mounted", "-r", dataset])
+        if listed.returncode != 0:
+            return CommandResult(returncode=1, stdout="", stderr=listed.stderr)
+
+        mounted_datasets: list[str] = []
+        for line in listed.stdout.splitlines():
+            fields = line.split("\t")
+            if len(fields) != 2:  # noqa: PLR2004
+                return self._error(f"unexpected zfs list output: {line}")
+
+            child_dataset, mounted = fields
+            if mounted != "yes":
+                continue
+            if not is_safe_dataset_name(child_dataset):
+                return self._error(f"unsafe dataset name from zfs list: {child_dataset}")
+            mounted_datasets.append(child_dataset)
+
+        return mounted_datasets
+
+    def _force_unmount_mounted_datasets(self, dataset: str) -> CommandResult | None:
+        mounted_datasets = self._mounted_datasets(dataset)
+        if isinstance(mounted_datasets, CommandResult):
+            return mounted_datasets
+
+        for mounted_dataset in reversed(mounted_datasets):
+            unmount = self.runner.run([self.zfs_path, "unmount", "-f", mounted_dataset])
+            if unmount.returncode != 0:
+                return CommandResult(returncode=1, stdout="", stderr=unmount.stderr)
+
+        return None
+
     def _lock(self, dataset: str, *, force: bool) -> CommandResult:
         if error := self._validate_dataset(dataset):
             return self._error(error)
 
-        if force:
-            unmount = self.runner.run([self.zfs_path, "unmount", "-f", "-r", dataset])
-            if unmount.returncode != 0:
-                return CommandResult(returncode=1, stdout="", stderr=unmount.stderr)
+        if force and (error_result := self._force_unmount_mounted_datasets(dataset)):
+            return error_result
 
         result = self.runner.run([self.zfs_path, "unload-key", "-r", dataset])
         if result.returncode != 0:

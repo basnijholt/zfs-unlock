@@ -190,7 +190,7 @@ zfs-unlock status
 # Lock a dataset after its services have stopped using it
 zfs-unlock lock -D tank/photos
 
-# Force recursive unmount before unloading the key
+# Force-unmount mounted descendants before unloading the key
 zfs-unlock lock --force -D tank/photos
 ```
 
