@@ -192,7 +192,7 @@ def test_nixos_client_module_generates_packaged_daemon_service() -> None:
     assert "zfs-unlock" in data["systemPackages"]
     assert data["user"] == "alice"
     assert data["group"] == "users"
-    assert "--daemon --interval 45" in data["execStart"]
+    assert " unlock --daemon --interval 45" in data["execStart"]
     assert "uvx" not in data["execStart"]
     assert data["environment"]["HOME"] == "/home/alice"
     assert data["environment"]["XDG_CONFIG_HOME"] == "/home/alice/.config"
