@@ -33,6 +33,7 @@ zfs-unlock = "zfs_unlock:app"
 
 [project.urls]
 Homepage = "https://github.com/basnijholt/zfs-unlock"
+Documentation = "https://zfs-unlock.nijho.lt"
 Repository = "https://github.com/basnijholt/zfs-unlock"
 Issues = "https://github.com/basnijholt/zfs-unlock/issues"
 
@@ -53,6 +54,11 @@ dev = [
     "mypy>=1.0",
     "ruff>=0.8",
     "types-pyyaml>=6.0",
+]
+docs = [
+    "markdown-code-runner>=2.7.0",
+    "markdown-gfm-admonition",
+    "zensical",
 ]
 
 [tool.ruff]

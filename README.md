@@ -2,6 +2,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/zfs-unlock)](https://pypi.org/project/zfs-unlock/)
 [![Python](https://img.shields.io/pypi/pyversions/zfs-unlock)](https://pypi.org/project/zfs-unlock/)
+[![Docs](https://img.shields.io/badge/docs-zfs--unlock.nijho.lt-blue)](https://zfs-unlock.nijho.lt)
 [![Nix](https://img.shields.io/badge/Nix-flake%20%2B%20NixOS%20modules-5277C3?logo=nixos&logoColor=white)](#setup)
 [![Tests](https://github.com/basnijholt/zfs-unlock/actions/workflows/pytest.yml/badge.svg)](https://github.com/basnijholt/zfs-unlock/actions/workflows/pytest.yml)
 [![License](https://img.shields.io/github/license/basnijholt/zfs-unlock)](LICENSE)
