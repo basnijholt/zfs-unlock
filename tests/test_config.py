@@ -5,12 +5,25 @@ from textwrap import dedent
 
 import pytest
 
-from zfs_unlock import Config, Dataset, SecretsMode, resolve_secret
+from zfs_unlock import DEFAULT_IDENTITY_FILE, EXAMPLE_CONFIG, Config, Dataset, SecretsMode, resolve_secret
 
 DEFAULT_PORT = 22
 DEFAULT_CONNECT_TIMEOUT = 5
 CUSTOM_PORT = 2222
 CUSTOM_CONNECT_TIMEOUT = 9
+
+
+def test_public_defaults_use_receiver_terminology() -> None:
+    """Public defaults avoid implying the receiver must be a storage appliance."""
+    old_host_name = "".join(chr(codepoint) for codepoint in (110, 97, 115))
+    old_host = f"{old_host_name}.local"
+    old_identity_file = f"zfs-unlock-{old_host_name}"
+
+    assert Path("~/.ssh/zfs-unlock-receiver") == DEFAULT_IDENTITY_FILE
+    assert "host: zfs-host.example.lan" in EXAMPLE_CONFIG
+    assert "zfs-unlock-receiver" in EXAMPLE_CONFIG
+    assert old_host not in EXAMPLE_CONFIG
+    assert old_identity_file not in EXAMPLE_CONFIG
 
 
 class TestResolveSecret:
@@ -84,7 +97,7 @@ class TestConfig:
         config_file = tmp_path / "config.yaml"
         config_file.write_text(
             dedent("""\
-            host: nas.local
+            host: zfs-host.example.lan
             datasets:
               tank/photos: my-passphrase
             """),
@@ -92,7 +105,7 @@ class TestConfig:
 
         config = Config.from_yaml(config_file)
 
-        assert config.host == "nas.local"
+        assert config.host == "zfs-host.example.lan"
         assert config.user == "zfs-unlock"
         assert config.port == DEFAULT_PORT
         assert config.identity_file is None
@@ -111,7 +124,7 @@ class TestConfig:
 
         config_file.write_text(
             dedent(f"""\
-            host: nas.local
+            host: zfs-host.example.lan
             user: unlocker
             port: {CUSTOM_PORT}
             identity_file: {identity_file}

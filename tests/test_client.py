@@ -40,7 +40,7 @@ def test_run_remote_builds_ssh_command_with_identity_file(tmp_path: Path) -> Non
     """run_remote builds a restricted OpenSSH command."""
     identity_file = tmp_path / "zfs-unlock-key"
     config = Config(
-        host="nas.local",
+        host="zfs-host.example.lan",
         user="unlocker",
         port=CUSTOM_SSH_PORT,
         identity_file=identity_file,
@@ -68,7 +68,7 @@ def test_run_remote_builds_ssh_command_with_identity_file(tmp_path: Path) -> Non
                 "IdentitiesOnly=yes",
                 "-i",
                 str(identity_file),
-                "unlocker@nas.local",
+                "unlocker@zfs-host.example.lan",
                 "status tank/photos",
             ],
             None,
@@ -79,7 +79,7 @@ def test_run_remote_builds_ssh_command_with_identity_file(tmp_path: Path) -> Non
 
 def test_unlock_keeps_stdin_open_for_passphrase() -> None:
     """Unlock must not pass -n because the passphrase is sent over stdin."""
-    config = Config(host="nas.local", datasets=[Dataset(path="tank/photos", secret="secret-pass")])
+    config = Config(host="zfs-host.example.lan", datasets=[Dataset(path="tank/photos", secret="secret-pass")])
     runner = RecordingRunner(CommandResult(returncode=0, stdout="unlocked tank/photos\n", stderr=""))
     client = ZfsUnlockClient(config, runner=runner)
 
@@ -104,7 +104,7 @@ def test_subprocess_runner_returns_timeout_for_hanging_command() -> None:
 
 def test_is_locked_maps_receiver_status() -> None:
     """is_locked maps receiver stdout to lock status."""
-    config = Config(host="nas.local", datasets=[Dataset(path="tank/photos", secret="pass")])
+    config = Config(host="zfs-host.example.lan", datasets=[Dataset(path="tank/photos", secret="pass")])
     runner = RecordingRunner(
         CommandResult(returncode=0, stdout="locked\n", stderr=""),
         CommandResult(returncode=0, stdout="unlocked\n", stderr=""),
@@ -120,7 +120,7 @@ def test_is_locked_maps_receiver_status() -> None:
 
 def test_unlock_sends_passphrase_over_stdin() -> None:
     """Unlock sends the dataset passphrase to the receiver over stdin."""
-    config = Config(host="nas.local", datasets=[Dataset(path="tank/photos", secret="secret-pass")])
+    config = Config(host="zfs-host.example.lan", datasets=[Dataset(path="tank/photos", secret="secret-pass")])
     runner = RecordingRunner(CommandResult(returncode=0, stdout="unlocked tank/photos\n", stderr=""))
     client = ZfsUnlockClient(config, runner=runner)
 
@@ -136,7 +136,7 @@ def test_unlock_sends_passphrase_over_stdin() -> None:
                 "BatchMode=yes",
                 "-o",
                 "ConnectTimeout=5",
-                "zfs-unlock@nas.local",
+                "zfs-unlock@zfs-host.example.lan",
                 "unlock tank/photos",
             ],
             "secret-pass\n",
@@ -147,7 +147,7 @@ def test_unlock_sends_passphrase_over_stdin() -> None:
 
 def test_lock_uses_force_flag() -> None:
     """Lock passes --force to the receiver only when requested."""
-    config = Config(host="nas.local", datasets=[Dataset(path="tank/photos", secret="secret-pass")])
+    config = Config(host="zfs-host.example.lan", datasets=[Dataset(path="tank/photos", secret="secret-pass")])
     runner = RecordingRunner(CommandResult(returncode=0, stdout="locked tank/photos\n", stderr=""))
     client = ZfsUnlockClient(config, runner=runner)
 

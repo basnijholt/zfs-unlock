@@ -306,7 +306,7 @@ def test_doctor_reports_missing_identity_file(tmp_path: Path) -> None:
 def test_doctor_checks_receiver_status(tmp_path: Path) -> None:
     """Doctor checks the receiver using a status command for one dataset."""
     config_file = tmp_path / "config.yaml"
-    key = write_private_file(tmp_path / "zfs-unlock-nas")
+    key = write_private_file(tmp_path / "zfs-unlock-receiver")
     config_file.write_text(f"host: 192.0.2.1\nidentity_file: {key}\ndatasets:\n  tank/ds: pass")
 
     with (
@@ -329,7 +329,7 @@ def test_doctor_checks_receiver_status(tmp_path: Path) -> None:
 def test_doctor_reports_missing_ssh_executable(tmp_path: Path) -> None:
     """Doctor reports when ssh is unavailable in the current environment."""
     config_file = tmp_path / "config.yaml"
-    key = write_private_file(tmp_path / "zfs-unlock-nas")
+    key = write_private_file(tmp_path / "zfs-unlock-receiver")
     config_file.write_text(f"host: 192.0.2.1\nidentity_file: {key}\ndatasets:\n  tank/ds: pass")
 
     with (
@@ -352,7 +352,7 @@ def test_doctor_reports_missing_ssh_executable(tmp_path: Path) -> None:
 def test_doctor_checks_all_configured_datasets(tmp_path: Path) -> None:
     """Doctor checks every configured dataset by default."""
     config_file = tmp_path / "config.yaml"
-    key = write_private_file(tmp_path / "zfs-unlock-nas")
+    key = write_private_file(tmp_path / "zfs-unlock-receiver")
     config_file.write_text(
         f"host: 192.0.2.1\nidentity_file: {key}\ndatasets:\n  tank/one: pass\n  tank/two: pass",
     )
@@ -383,7 +383,7 @@ def test_doctor_checks_all_configured_datasets(tmp_path: Path) -> None:
 def test_doctor_fails_unknown_receiver_status(tmp_path: Path) -> None:
     """Doctor fails when a receiver reports an unclassified dataset status."""
     config_file = tmp_path / "config.yaml"
-    key = write_private_file(tmp_path / "zfs-unlock-nas")
+    key = write_private_file(tmp_path / "zfs-unlock-receiver")
     config_file.write_text(f"host: 192.0.2.1\nidentity_file: {key}\ndatasets:\n  tank/plain: pass")
 
     with (
@@ -404,7 +404,7 @@ def test_doctor_fails_unknown_receiver_status(tmp_path: Path) -> None:
 def test_doctor_fails_world_readable_identity_file(tmp_path: Path) -> None:
     """Doctor rejects SSH identity files readable by group or others."""
     config_file = tmp_path / "config.yaml"
-    key = tmp_path / "zfs-unlock-nas"
+    key = tmp_path / "zfs-unlock-receiver"
     key.write_text("secret")
     key.chmod(0o644)
     config_file.write_text(f"host: 192.0.2.1\nidentity_file: {key}\ndatasets:\n  tank/ds: pass")
@@ -419,7 +419,7 @@ def test_doctor_fails_world_readable_identity_file(tmp_path: Path) -> None:
 def test_doctor_fails_world_readable_file_secret(tmp_path: Path) -> None:
     """Doctor rejects file-backed dataset secrets readable by group or others."""
     config_file = tmp_path / "config.yaml"
-    key = write_private_file(tmp_path / "zfs-unlock-nas")
+    key = write_private_file(tmp_path / "zfs-unlock-receiver")
     secret = tmp_path / "tank-ds.key"
     secret.write_text("passphrase")
     secret.chmod(0o644)
@@ -436,7 +436,7 @@ def test_doctor_fails_world_readable_file_secret(tmp_path: Path) -> None:
 
 def test_keygen_creates_unlock_key(tmp_path: Path) -> None:
     """Keygen creates an ed25519 key and prints the public key."""
-    key_path = tmp_path / "zfs-unlock-nas"
+    key_path = tmp_path / "zfs-unlock-receiver"
 
     def fake_run(cmd: list[str], *, check: bool = True) -> MagicMock:
         assert check is True

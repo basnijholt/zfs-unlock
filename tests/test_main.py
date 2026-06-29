@@ -1,4 +1,4 @@
-"""Tests for the restricted NAS-side receiver."""
+"""Tests for the restricted receiver."""
 
 from __future__ import annotations
 
