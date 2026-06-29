@@ -1,13 +1,11 @@
 # ZFS Unlock
 
-<p align="center">
-  <img src="docs/logo.svg" alt="ZFS Unlock logo" width="180">
-</p>
-
 [![PyPI](https://img.shields.io/pypi/v/zfs-unlock)](https://pypi.org/project/zfs-unlock/)
 [![Python](https://img.shields.io/pypi/pyversions/zfs-unlock)](https://pypi.org/project/zfs-unlock/)
 [![Tests](https://github.com/basnijholt/zfs-unlock/actions/workflows/pytest.yml/badge.svg)](https://github.com/basnijholt/zfs-unlock/actions/workflows/pytest.yml)
 [![License](https://img.shields.io/github/license/basnijholt/zfs-unlock)](LICENSE)
+
+<img src="docs/logo.svg" alt="ZFS Unlock Logo" align="right" width="120" />
 
 Unlock encrypted OpenZFS datasets over a restricted SSH receiver.
 
@@ -179,22 +177,21 @@ zfs-unlock --help
 
  Unlock OpenZFS datasets over a restricted SSH receiver
 
-╭─ Options ────────────────────────────────────────────────────────────────────╮
-│ --config    -c      PATH     Config file path                                │
-│ --dry-run   -n               Show what would be done                         │
-│ --daemon    -d               Run continuously                                │
-│ --interval  -i      INTEGER  Seconds between checks (1s if unreachable)      │
-│                              [default: 30]                                   │
-│ --dataset   -D      TEXT     Filter by dataset path                          │
-│ --version   -v               Show version and exit                           │
-│ --help      -h               Show this message and exit.                     │
-╰──────────────────────────────────────────────────────────────────────────────╯
-╭─ Commands ───────────────────────────────────────────────────────────────────╮
-│ lock      Lock configured datasets.                                          │
-│ status    Show lock status of configured datasets.                           │
-│ receiver  Run the restricted NAS-side receiver.                              │
-│ service   Manage system service                                              │
-╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ Options ──────────────────────────────────────────────────────────────────────────────╮
+│ --config    -c      PATH     Config file path                                          │
+│ --dry-run   -n               Show what would be done                                   │
+│ --daemon    -d               Run continuously                                          │
+│ --interval  -i      INTEGER  Seconds between checks (1s if unreachable) [default: 30]  │
+│ --dataset   -D      TEXT     Filter by dataset path                                    │
+│ --version   -v               Show version and exit                                     │
+│ --help      -h               Show this message and exit.                               │
+╰────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Commands ─────────────────────────────────────────────────────────────────────────────╮
+│ lock      Lock configured datasets.                                                    │
+│ status    Show lock status of configured datasets.                                     │
+│ receiver  Run the restricted NAS-side receiver.                                        │
+│ service   Manage system service                                                        │
+╰────────────────────────────────────────────────────────────────────────────────────────╯
 
 ```
 
