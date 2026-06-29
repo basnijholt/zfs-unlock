@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">ZFS Unlock logo</title>
+  <desc id="desc">Layered ZFS storage blocks with a restricted unlock keyhole and off-box key signal.</desc>
+  <defs>
+    <linearGradient id="bg" x1="80" y1="48" x2="432" y2="464" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#111827" />
+      <stop offset="1" stop-color="#07111f" />
+    </linearGradient>
+    <linearGradient id="topLayer" x1="112" y1="126" x2="400" y2="190" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#31c3aa" />
+      <stop offset="1" stop-color="#178f9e" />
+    </linearGradient>
+    <linearGradient id="midLayer" x1="112" y1="192" x2="400" y2="256" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2aa7d6" />
+      <stop offset="1" stop-color="#2563eb" />
+    </linearGradient>
+    <linearGradient id="lowLayer" x1="112" y1="258" x2="400" y2="322" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#5266d9" />
+      <stop offset="1" stop-color="#334155" />
+    </linearGradient>
+  </defs>
+
+  <rect x="32" y="32" width="448" height="448" rx="96" fill="url(#bg)" />
+  <rect x="34" y="34" width="444" height="444" rx="94" fill="none" stroke="#1f354f" stroke-width="4" />
+
+  <g opacity="0.22" stroke="#5eead4" stroke-width="2">
+    <path d="M96 104H416" />
+    <path d="M96 408H416" />
+    <path d="M104 96V416" />
+    <path d="M408 96V416" />
+  </g>
+
+  <g>
+    <rect x="104" y="138" width="304" height="192" rx="24" fill="#020617" opacity="0.24" />
+    <rect x="112" y="126" width="288" height="64" rx="20" fill="url(#topLayer)" />
+    <rect x="112" y="192" width="288" height="64" rx="20" fill="url(#midLayer)" />
+    <rect x="112" y="258" width="288" height="64" rx="20" fill="url(#lowLayer)" />
+    <path d="M134 160H206" stroke="#dffcf7" stroke-width="8" stroke-linecap="round" opacity="0.55" />
+    <path d="M134 226H206" stroke="#e0f2fe" stroke-width="8" stroke-linecap="round" opacity="0.48" />
+    <path d="M134 292H206" stroke="#e2e8f0" stroke-width="8" stroke-linecap="round" opacity="0.42" />
+  </g>
+
+  <g>
+    <circle cx="256" cy="220" r="34" fill="#07111f" />
+    <rect x="238" y="238" width="36" height="88" rx="18" fill="#07111f" />
+    <circle cx="256" cy="220" r="19" fill="none" stroke="#f8c14a" stroke-width="8" />
+    <path d="M256 246V294" stroke="#f8c14a" stroke-width="10" stroke-linecap="round" />
+  </g>
+
+  <g fill="none" stroke="#f8c14a" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M256 326L214 368H164" stroke-width="10" />
+    <circle cx="144" cy="368" r="20" fill="#07111f" stroke-width="8" />
+    <path d="M122 392L144 368L166 392" stroke-width="8" />
+    <path d="M174 368H190" stroke-width="8" />
+  </g>
+</svg>
