@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import shlex
+import subprocess
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -15,6 +17,8 @@ from rich.console import Console
 
 console = Console()
 err_console = Console(stderr=True)
+
+DATASET_NAME_RE = re.compile(r"^[A-Za-z0-9_.:-]+(?:/[A-Za-z0-9_.:-]+)*$")
 
 
 class SecretsMode(str, Enum):
@@ -112,6 +116,145 @@ class SubprocessRunner:
             stdout=stdout.decode(errors="replace"),
             stderr=stderr.decode(errors="replace"),
         )
+
+
+class LocalCommandRunner(Protocol):
+    """Synchronous local command runner protocol for the receiver."""
+
+    def run(self, args: list[str], *, input_text: str | None = None) -> CommandResult:
+        """Run a local command and return its result."""
+
+
+class LocalSubprocessRunner:
+    """Run local receiver commands through subprocess."""
+
+    def run(self, args: list[str], *, input_text: str | None = None) -> CommandResult:
+        """Run a local command and capture stdout/stderr."""
+        result = subprocess.run(
+            args,
+            input=input_text,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return CommandResult(returncode=result.returncode, stdout=result.stdout, stderr=result.stderr)
+
+
+def is_safe_dataset_name(name: str) -> bool:
+    """Return whether a string is a conservative ZFS dataset name."""
+    if not DATASET_NAME_RE.fullmatch(name):
+        return False
+    return all(segment not in {".", ".."} and not segment.startswith("-") for segment in name.split("/"))
+
+
+def parse_receiver_command(command: str) -> list[str]:
+    """Parse an SSH_ORIGINAL_COMMAND string into receiver arguments."""
+    return shlex.split(command)
+
+
+class Receiver:
+    """Restricted NAS-side receiver for ZFS unlock commands."""
+
+    def __init__(
+        self,
+        *,
+        allow_file: Path,
+        runner: LocalCommandRunner | None = None,
+        zfs_path: str = "zfs",
+    ) -> None:
+        self.allow_file = allow_file
+        self.runner = runner or LocalSubprocessRunner()
+        self.zfs_path = zfs_path
+
+    def handle(self, args: list[str], *, stdin_text: str) -> CommandResult:
+        """Handle a restricted receiver command."""
+        if not args:
+            return self._error("missing command")
+
+        command = args[0]
+        if command == "status" and len(args) == 2:  # noqa: PLR2004
+            return self._status(args[1])
+        if command == "unlock" and len(args) == 2:  # noqa: PLR2004
+            return self._unlock(args[1], stdin_text=stdin_text)
+        if command == "lock" and len(args) in {2, 3}:  # noqa: PLR2004
+            force = len(args) == 3 and args[2] == "--force"  # noqa: PLR2004
+            if len(args) == 3 and not force:  # noqa: PLR2004
+                return self._error("unsupported lock option")
+            return self._lock(args[1], force=force)
+        return self._error("unsupported command")
+
+    def _allowed_datasets(self) -> set[str]:
+        if not self.allow_file.exists():
+            return set()
+
+        datasets: set[str] = set()
+        for line in self.allow_file.read_text().splitlines():
+            stripped = line.strip()
+            if stripped and not stripped.startswith("#"):
+                datasets.add(stripped)
+        return datasets
+
+    def _validate_dataset(self, dataset: str) -> str | None:
+        if not is_safe_dataset_name(dataset):
+            return f"unsafe dataset name: {dataset}"
+        if dataset not in self._allowed_datasets():
+            return f"dataset not allowed: {dataset}"
+        return None
+
+    def _keystatus(self, dataset: str) -> CommandResult:
+        return self.runner.run([self.zfs_path, "get", "-H", "-o", "value", "keystatus", dataset])
+
+    def _status(self, dataset: str) -> CommandResult:
+        if error := self._validate_dataset(dataset):
+            return self._error(error)
+
+        result = self._keystatus(dataset)
+        if result.returncode != 0:
+            return CommandResult(returncode=1, stdout="", stderr=result.stderr)
+
+        status = result.stdout.strip()
+        if status == "unavailable":
+            return CommandResult(returncode=0, stdout="locked\n", stderr="")
+        if status == "available":
+            return CommandResult(returncode=0, stdout="unlocked\n", stderr="")
+        return CommandResult(returncode=0, stdout="unknown\n", stderr="")
+
+    def _unlock(self, dataset: str, *, stdin_text: str) -> CommandResult:
+        if error := self._validate_dataset(dataset):
+            return self._error(error)
+
+        status = self._keystatus(dataset)
+        if status.returncode != 0:
+            return CommandResult(returncode=1, stdout="", stderr=status.stderr)
+        if status.stdout.strip() == "available":
+            return CommandResult(returncode=0, stdout=f"already unlocked {dataset}\n", stderr="")
+        if not stdin_text:
+            return self._error("missing passphrase on stdin")
+
+        result = self.runner.run([self.zfs_path, "load-key", "-L", "prompt", dataset], input_text=stdin_text)
+        if result.returncode != 0:
+            return CommandResult(returncode=1, stdout="", stderr=result.stderr)
+
+        self.runner.run([self.zfs_path, "mount", "-a"])
+        return CommandResult(returncode=0, stdout=f"unlocked {dataset}\n", stderr="")
+
+    def _lock(self, dataset: str, *, force: bool) -> CommandResult:
+        if error := self._validate_dataset(dataset):
+            return self._error(error)
+
+        if force:
+            unmount = self.runner.run([self.zfs_path, "unmount", "-f", "-r", dataset])
+            if unmount.returncode != 0:
+                return CommandResult(returncode=1, stdout="", stderr=unmount.stderr)
+
+        result = self.runner.run([self.zfs_path, "unload-key", "-r", dataset])
+        if result.returncode != 0:
+            return CommandResult(returncode=1, stdout="", stderr=result.stderr)
+        return CommandResult(returncode=0, stdout=f"locked {dataset}\n", stderr="")
+
+    @staticmethod
+    def _error(message: str) -> CommandResult:
+        return CommandResult(returncode=1, stdout="", stderr=f"{message}\n")
 
 
 class ZfsUnlockClient:
