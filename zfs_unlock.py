@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.metadata
 import os
 import platform
 import re
@@ -22,9 +23,12 @@ from pydantic import BaseModel
 from rich.console import Console
 
 try:
-    from _version import __version__
-except ImportError:
-    __version__ = "unknown"
+    __version__ = importlib.metadata.version("zfs-unlock")
+except importlib.metadata.PackageNotFoundError:
+    try:
+        from _version import __version__
+    except ImportError:
+        __version__ = "unknown"
 
 console = Console()
 err_console = Console(stderr=True)
