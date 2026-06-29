@@ -570,7 +570,7 @@ app = typer.Typer(
 )
 
 service_app = typer.Typer(help="Manage system service", no_args_is_help=True)
-app.add_typer(service_app, name="service")
+app.add_typer(service_app, name="service", rich_help_panel="Service Commands")
 
 
 def _get_uv_path() -> Path | None:
@@ -709,7 +709,7 @@ async def _check_receiver_statuses(config: Config, datasets: list[Dataset]) -> b
     return ok
 
 
-@app.command()
+@app.command(rich_help_panel="Setup Commands")
 def keygen(
     identity_file: Annotated[
         Path,
@@ -741,7 +741,7 @@ def keygen(
     console.print(public_key)
 
 
-@app.command()
+@app.command(rich_help_panel="Client Commands")
 def doctor(
     config_path: Annotated[Path | None, typer.Option("--config", "-c", help="Config file path")] = None,
     dataset: Annotated[str | None, typer.Option("--dataset", "-D", help="Dataset to check")] = None,
@@ -937,7 +937,7 @@ def _load_config(config_path: Path | None) -> tuple[Path, Config]:
     return config_path, Config.from_yaml(config_path)
 
 
-@app.command()
+@app.command(rich_help_panel="Client Commands")
 def unlock(
     config_path: Annotated[Path | None, typer.Option("--config", "-c", help="Config file path")] = None,
     dry_run: Annotated[bool, typer.Option("--dry-run", "-n", help="Show what would be done")] = False,
@@ -977,7 +977,7 @@ def unlock(
         asyncio.run(run_unlock(config, dry_run=dry_run, dataset_filters=dataset))
 
 
-@app.command()
+@app.command(rich_help_panel="Client Commands")
 def lock(
     config_path: Annotated[Path | None, typer.Option("--config", "-c", help="Config file path")] = None,
     force: Annotated[bool, typer.Option("--force", "-f", help="Force unmount before locking")] = False,
@@ -989,7 +989,7 @@ def lock(
     asyncio.run(run_lock(config, force=force, dataset_filters=dataset))
 
 
-@app.command()
+@app.command(rich_help_panel="Client Commands")
 def status(
     config_path: Annotated[Path | None, typer.Option("--config", "-c", help="Config file path")] = None,
     dataset: Annotated[list[str] | None, typer.Option("--dataset", "-D", help="Filter by dataset path")] = None,
@@ -1000,7 +1000,10 @@ def status(
     asyncio.run(run_status(config, dataset_filters=dataset))
 
 
-@app.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+@app.command(
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    rich_help_panel="Receiver Commands",
+)
 def receiver(
     ctx: typer.Context,
     allow_file: Annotated[

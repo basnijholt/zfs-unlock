@@ -76,6 +76,17 @@ def test_cli_help() -> None:
     assert "Unlock OpenZFS datasets" in result.stdout
 
 
+def test_cli_help_groups_commands() -> None:
+    """Top-level help groups commands by operator workflow."""
+    result = runner.invoke(app, ["--help"])
+
+    assert result.exit_code == 0
+    assert "Client Commands" in result.stdout
+    assert "Setup Commands" in result.stdout
+    assert "Receiver Commands" in result.stdout
+    assert "Service Commands" in result.stdout
+
+
 def test_cli_without_subcommand_shows_help() -> None:
     """Bare invocation shows help and does not unlock datasets."""
     with patch("zfs_unlock.run_unlock") as run_unlock:
