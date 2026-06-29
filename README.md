@@ -86,7 +86,12 @@ let
 
   receiver = pkgs.writeShellScript "zfs-unlock-receiver" ''
     exec ${zfsUnlock}/bin/zfs-unlock receiver \
-      --allow-file /etc/zfs-unlock/allowed-datasets
+      --allow-file /etc/zfs-unlock/allowed-datasets "$@"
+  '';
+
+  sshWrapper = pkgs.writeShellScript "zfs-unlock-ssh-wrapper" ''
+    set -eu
+    exec ${pkgs.sudo}/bin/sudo -n ${receiver} "$SSH_ORIGINAL_COMMAND"
   '';
 in
 {
@@ -98,7 +103,7 @@ in
     home = "/var/lib/zfs-unlock";
     createHome = true;
     openssh.authorizedKeys.keys = [
-      ''restrict,from="192.168.1.50",command="${pkgs.sudo}/bin/sudo -n ${receiver}" ssh-ed25519 AAAA... unlock-device''
+      ''restrict,from="192.168.1.50",command="${sshWrapper}" ssh-ed25519 AAAA... unlock-device''
     ];
   };
 
@@ -124,6 +129,10 @@ in
 The key point is that the SSH key can only execute the receiver wrapper. The
 receiver still checks the requested dataset against
 `/etc/zfs-unlock/allowed-datasets`.
+
+The extra `sshWrapper` avoids relying on `sudo` preserving
+`SSH_ORIGINAL_COMMAND`. It captures the SSH command before sudo and passes it to
+the root receiver as one argument.
 
 ## Usage
 

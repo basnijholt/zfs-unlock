@@ -740,7 +740,9 @@ def receiver(
 ) -> None:
     """Run the restricted NAS-side receiver."""
     args = list(ctx.args)
-    if not args:
+    if len(args) == 1:
+        args = parse_receiver_command(args[0])
+    elif not args:
         original_command = os.environ.get("SSH_ORIGINAL_COMMAND", "")
         args = parse_receiver_command(original_command) if original_command else []
 

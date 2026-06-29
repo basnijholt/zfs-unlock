@@ -164,6 +164,21 @@ def test_cli_receiver_uses_ssh_original_command(tmp_path: Path) -> None:
     receiver_cls.return_value.handle.assert_called_once_with(["status", "tank/photos"], stdin_text="")
 
 
+def test_cli_receiver_parses_single_wrapped_command_argument(tmp_path: Path) -> None:
+    """Receiver command parses one shell command argument from a sudo wrapper."""
+    allow_file = tmp_path / "allowed"
+    allow_file.write_text("tank/photos\n")
+    response = MagicMock(returncode=0, stdout="locked\n", stderr="")
+
+    with patch("zfs_unlock.Receiver") as receiver_cls:
+        receiver_cls.return_value.handle.return_value = response
+        result = runner.invoke(app, ["receiver", "--allow-file", str(allow_file), "status tank/photos"])
+
+    assert result.exit_code == 0
+    assert result.stdout == "locked\n"
+    receiver_cls.return_value.handle.assert_called_once_with(["status", "tank/photos"], stdin_text="")
+
+
 def test_service_status_linux() -> None:
     """Service status checks systemd user unit on Linux."""
     with patch("platform.system", return_value="Linux"), patch("zfs_unlock._run") as mock_run:
