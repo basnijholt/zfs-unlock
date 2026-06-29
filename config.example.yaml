@@ -1,0 +1,17 @@
+# ZFS Unlock Configuration
+# Copy to ~/.config/zfs-unlock/config.yaml on the off-box unlock device.
+
+host: nas.local
+user: zfs-unlock
+identity_file: ~/.ssh/zfs-unlock-nas
+# port: 22
+# connect_timeout: 5
+
+# secrets: auto  # auto (default) | files | inline
+#   - auto: if value is an existing file, read from it; otherwise use as literal
+#   - files: always treat values as file paths
+#   - inline: always treat values as literal secrets
+
+datasets:
+  tank/syncthing: ~/.secrets/syncthing-key
+  tank/photos: my-literal-passphrase

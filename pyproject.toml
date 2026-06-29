@@ -58,10 +58,14 @@ dev = [
 [tool.ruff]
 line-length = 120
 target-version = "py311"
+extend-exclude = ["_version.py"]
 
 [tool.ruff.lint]
 select = ["ALL"]
 ignore = [
+    "COM812",  # Conflicts with ruff format
+    "D203",    # Conflicts with D211
+    "D213",    # Conflicts with D212
     "T20",
     "S101",
     "S603",

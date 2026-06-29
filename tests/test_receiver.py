@@ -2,19 +2,24 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from zfs_unlock import CommandResult, Receiver, is_safe_dataset_name, parse_receiver_command
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class RecordingLocalRunner:
     """Sync runner that records local ZFS calls."""
 
     def __init__(self, *results: CommandResult) -> None:
+        """Initialize with queued command results."""
         self.results = list(results)
         self.calls: list[tuple[list[str], str | None]] = []
 
     def run(self, args: list[str], *, input_text: str | None = None) -> CommandResult:
+        """Record a command and return the next queued result."""
         self.calls.append((args, input_text))
         if not self.results:
             return CommandResult(returncode=0, stdout="", stderr="")

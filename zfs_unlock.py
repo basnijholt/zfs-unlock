@@ -3,25 +3,102 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import platform
 import re
 import shlex
+import shutil
 import subprocess
+import sys
+import time
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
-from typing import Protocol
+from typing import Annotated, Protocol
 
+import typer
 import yaml
 from pydantic import BaseModel
 from rich.console import Console
+
+try:
+    from _version import __version__
+except ImportError:
+    __version__ = "unknown"
 
 console = Console()
 err_console = Console(stderr=True)
 
 DATASET_NAME_RE = re.compile(r"^[A-Za-z0-9_.:-]+(?:/[A-Za-z0-9_.:-]+)*$")
 
+CONFIG_SEARCH_PATHS = [
+    Path("config.yaml"),
+    Path("config.yml"),
+    Path.home() / ".config" / "zfs-unlock" / "config.yaml",
+    Path.home() / ".config" / "zfs-unlock" / "config.yml",
+]
 
-class SecretsMode(str, Enum):
+EXAMPLE_CONFIG = """\
+host: nas.local
+user: zfs-unlock
+# port: 22
+# identity_file: ~/.ssh/zfs-unlock-nas
+# connect_timeout: 5
+# secrets: auto  # auto (default), files, or inline
+
+datasets:
+  tank/syncthing: ~/.secrets/syncthing-key
+  tank/photos: my-literal-passphrase
+"""
+
+SYSTEMD_SERVICE = """\
+[Unit]
+Description=ZFS Unlock
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Environment="PATH={path}"
+ExecStart={uv_path} tool run zfs-unlock --daemon
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
+"""
+
+LAUNCHD_PLIST = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" \
+"http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.zfs_unlock</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>{uv_path}</string>
+    <string>tool</string>
+    <string>run</string>
+    <string>zfs-unlock</string>
+    <string>--daemon</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>WorkingDirectory</key>
+  <string>{home}</string>
+  <key>StandardOutPath</key>
+  <string>{log_dir}/zfs-unlock.out</string>
+  <key>StandardErrorPath</key>
+  <string>{log_dir}/zfs-unlock.err</string>
+</dict>
+</plist>
+"""
+
+
+class SecretsMode(StrEnum):
     """How to interpret secret values."""
 
     AUTO = "auto"
@@ -111,8 +188,9 @@ class SubprocessRunner:
             stderr=asyncio.subprocess.PIPE,
         )
         stdout, stderr = await process.communicate(None if input_text is None else input_text.encode())
+        returncode = process.returncode if process.returncode is not None else 1
         return CommandResult(
-            returncode=process.returncode,
+            returncode=returncode,
             stdout=stdout.decode(errors="replace"),
             stderr=stderr.decode(errors="replace"),
         )
@@ -162,6 +240,7 @@ class Receiver:
         runner: LocalCommandRunner | None = None,
         zfs_path: str = "zfs",
     ) -> None:
+        """Initialize the receiver with an allowlist file and command runner."""
         self.allow_file = allow_file
         self.runner = runner or LocalSubprocessRunner()
         self.zfs_path = zfs_path
@@ -176,7 +255,7 @@ class Receiver:
             return self._status(args[1])
         if command == "unlock" and len(args) == 2:  # noqa: PLR2004
             return self._unlock(args[1], stdin_text=stdin_text)
-        if command == "lock" and len(args) in {2, 3}:  # noqa: PLR2004
+        if command == "lock" and len(args) in {2, 3}:
             force = len(args) == 3 and args[2] == "--force"  # noqa: PLR2004
             if len(args) == 3 and not force:  # noqa: PLR2004
                 return self._error("unsupported lock option")
@@ -296,7 +375,7 @@ class ZfsUnlockClient:
             return True
         if status == "unlocked":
             if not quiet:
-                console.print(f"[green]✓[/green] {dataset.path}")
+                console.print(f"[green]OK[/green] {dataset.path}")
             return False
         return None
 
@@ -307,7 +386,7 @@ class ZfsUnlockClient:
         if result.returncode != 0:
             err_console.print(f"[red]unlock failed for {dataset.path}: {result.stderr.strip()}[/red]")
             return False
-        console.print(f"[blue]→[/blue] Unlocked {dataset.path}")
+        console.print(f"[blue]->[/blue] Unlocked {dataset.path}")
         return True
 
     async def lock(self, dataset: Dataset, *, force: bool = False) -> bool:
@@ -319,16 +398,17 @@ class ZfsUnlockClient:
         if result.returncode != 0:
             err_console.print(f"[red]lock failed for {dataset.path}: {result.stderr.strip()}[/red]")
             return False
-        console.print(f"[yellow]🔒[/yellow] Locked {dataset.path}")
+        console.print(f"[yellow]LOCK[/yellow] Locked {dataset.path}")
         return True
 
     async def check_and_unlock(self, dataset: Dataset, *, quiet: bool = False) -> bool:
         """Unlock a dataset only if it is currently locked."""
         locked = await self.is_locked(dataset, quiet=quiet)
         if locked is None:
-            raise ConnectionError("Failed to check lock status")
+            msg = "Failed to check lock status"
+            raise ConnectionError(msg)
         if locked:
-            console.print(f"[yellow]⚡[/yellow] {dataset.path} locked, unlocking...")
+            console.print(f"[yellow]![/yellow] {dataset.path} locked, unlocking...")
             return await self.unlock(dataset)
         return False
 
@@ -357,17 +437,14 @@ async def run_unlock(
     if dry_run:
         console.print("[yellow]Dry run:[/yellow]")
         for dataset in datasets:
-            console.print(f"  • {dataset.path}")
+            console.print(f"  - {dataset.path}")
         return True
 
     client = ZfsUnlockClient(config, runner=runner)
-    try:
-        statuses = await asyncio.gather(
-            *[client.is_locked(dataset, quiet=quiet) for dataset in datasets],
-            return_exceptions=True,
-        )
-    except Exception:
-        return False
+    statuses = await asyncio.gather(
+        *[client.is_locked(dataset, quiet=quiet) for dataset in datasets],
+        return_exceptions=True,
+    )
 
     for status in statuses:
         if isinstance(status, Exception) or status is None:
@@ -417,8 +494,311 @@ async def run_status(
     statuses = await asyncio.gather(*[client.is_locked(dataset, quiet=True) for dataset in datasets])
     for dataset, locked in zip(datasets, statuses, strict=True):
         if locked is True:
-            console.print(f"[yellow]🔒[/yellow] {dataset.path} [dim]locked[/dim]")
+            console.print(f"[yellow]LOCK[/yellow] {dataset.path} [dim]locked[/dim]")
         elif locked is False:
-            console.print(f"[green]🔓[/green] {dataset.path} [dim]unlocked[/dim]")
+            console.print(f"[green]OPEN[/green] {dataset.path} [dim]unlocked[/dim]")
         else:
             console.print(f"[red]?[/red] {dataset.path} [dim]unknown[/dim]")
+
+
+def find_config() -> Path | None:
+    """Find config file in standard locations."""
+    for path in CONFIG_SEARCH_PATHS:
+        if path.exists():
+            return path
+    return None
+
+
+def _version_callback(value: bool) -> None:  # noqa: FBT001
+    if value:
+        console.print(f"zfs-unlock {__version__}")
+        raise typer.Exit
+
+
+app = typer.Typer(
+    help="Unlock OpenZFS datasets over a restricted SSH receiver",
+    no_args_is_help=False,
+    add_completion=False,
+    context_settings={"help_option_names": ["-h", "--help"]},
+)
+
+service_app = typer.Typer(help="Manage system service", no_args_is_help=True)
+app.add_typer(service_app, name="service")
+
+
+def _get_uv_path() -> Path | None:
+    """Find uv executable."""
+    uv = shutil.which("uv")
+    return Path(uv) if uv else None
+
+
+def _run(cmd: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
+    """Run a command and return the result."""
+    return subprocess.run(cmd, capture_output=True, text=True, check=check)
+
+
+@service_app.command("install")
+def service_install() -> None:
+    """Install and start the system service."""
+    uv_path = _get_uv_path()
+    if not uv_path:
+        err_console.print("[red]Error: uv not found. Install from https://docs.astral.sh/uv/[/red]")
+        raise typer.Exit(1)
+
+    config_path = find_config()
+    if not config_path:
+        err_console.print("[yellow]Warning: Config not found.[/yellow]")
+        err_console.print("Create ~/.config/zfs-unlock/config.yaml before starting.")
+
+    system = platform.system()
+    if system == "Darwin":
+        _install_macos(uv_path)
+    elif system == "Linux":
+        _install_linux(uv_path)
+    else:
+        err_console.print(f"[red]Unsupported OS: {system}[/red]")
+        raise typer.Exit(1)
+
+
+def _install_macos(uv_path: Path) -> None:
+    """Install launchd service on macOS."""
+    plist_name = "com.zfs_unlock.plist"
+    plist_dst = Path.home() / "Library" / "LaunchAgents" / plist_name
+    log_dir = Path.home() / "Library" / "Logs" / "zfs-unlock"
+
+    log_dir.mkdir(parents=True, exist_ok=True)
+    plist_dst.parent.mkdir(parents=True, exist_ok=True)
+    plist_dst.write_text(LAUNCHD_PLIST.format(uv_path=uv_path, home=Path.home(), log_dir=log_dir))
+    _run(["launchctl", "load", str(plist_dst)])
+
+    console.print("[green]OK[/green] Service installed and started")
+    console.print(f"  Logs: {log_dir}/")
+    console.print("\n  Uninstall: [bold]zfs-unlock service uninstall[/bold]")
+
+
+def _install_linux(uv_path: Path) -> None:
+    """Install systemd user service on Linux."""
+    service_name = "zfs-unlock.service"
+    service_dir = Path.home() / ".config" / "systemd" / "user"
+    service_dst = service_dir / service_name
+
+    service_dir.mkdir(parents=True, exist_ok=True)
+    current_path = os.environ.get("PATH", "/usr/bin:/bin")
+    service_dst.write_text(SYSTEMD_SERVICE.format(uv_path=uv_path, path=current_path))
+
+    _run(["systemctl", "--user", "daemon-reload"])
+    _run(["systemctl", "--user", "enable", "--now", "zfs-unlock"])
+
+    console.print("[green]OK[/green] Service installed and started")
+    console.print("\n  View logs: [bold]journalctl --user -u zfs-unlock -f[/bold]")
+    console.print("  Run at boot: [bold]sudo loginctl enable-linger $USER[/bold]")
+    console.print("\n  Uninstall: [bold]zfs-unlock service uninstall[/bold]")
+
+
+@service_app.command("uninstall")
+def service_uninstall() -> None:
+    """Stop and remove the system service."""
+    system = platform.system()
+    if system == "Darwin":
+        _uninstall_macos()
+    elif system == "Linux":
+        _uninstall_linux()
+    else:
+        err_console.print(f"[red]Unsupported OS: {system}[/red]")
+        raise typer.Exit(1)
+
+
+def _uninstall_macos() -> None:
+    """Uninstall launchd service on macOS."""
+    plist_dst = Path.home() / "Library" / "LaunchAgents" / "com.zfs_unlock.plist"
+    if not plist_dst.exists():
+        console.print("Service not installed.")
+        return
+
+    _run(["launchctl", "unload", str(plist_dst)], check=False)
+    plist_dst.unlink()
+    console.print("[green]OK[/green] Service uninstalled")
+
+
+def _uninstall_linux() -> None:
+    """Uninstall systemd user service on Linux."""
+    service_dst = Path.home() / ".config" / "systemd" / "user" / "zfs-unlock.service"
+    if not service_dst.exists():
+        console.print("Service not installed.")
+        return
+
+    _run(["systemctl", "--user", "stop", "zfs-unlock"], check=False)
+    _run(["systemctl", "--user", "disable", "zfs-unlock"], check=False)
+    service_dst.unlink()
+    _run(["systemctl", "--user", "daemon-reload"])
+    console.print("[green]OK[/green] Service uninstalled")
+
+
+@service_app.command("status")
+def service_status() -> None:
+    """Check service status."""
+    system = platform.system()
+    if system == "Darwin":
+        result = _run(["launchctl", "list"], check=False)
+        if "com.zfs_unlock" in result.stdout:
+            console.print("[green]ACTIVE[/green] Service is running")
+        else:
+            console.print("[dim]INACTIVE[/dim] Service is not running")
+    elif system == "Linux":
+        result = _run(["systemctl", "--user", "is-active", "zfs-unlock"], check=False)
+        if result.stdout.strip() == "active":
+            console.print("[green]ACTIVE[/green] Service is running")
+        else:
+            console.print("[dim]INACTIVE[/dim] Service is not running")
+    else:
+        err_console.print(f"[red]Unsupported OS: {system}[/red]")
+        raise typer.Exit(1)
+
+
+@service_app.command("logs")
+def service_logs(
+    follow: Annotated[bool, typer.Option("--follow", "-f", help="Follow log output")] = True,
+) -> None:
+    """View service logs."""
+    system = platform.system()
+    if system == "Darwin":
+        log_dir = Path.home() / "Library" / "Logs" / "zfs-unlock"
+        out_log = log_dir / "zfs-unlock.out"
+        err_log = log_dir / "zfs-unlock.err"
+        if not log_dir.exists():
+            err_console.print("[yellow]No logs found. Is the service installed?[/yellow]")
+            raise typer.Exit(1)
+
+        tail_path = shutil.which("tail")
+        if not tail_path:
+            err_console.print("[red]Error: tail not found.[/red]")
+            raise typer.Exit(1)
+
+        cmd = [tail_path]
+        if follow:
+            cmd.append("-f")
+        cmd.extend([str(out_log), str(err_log)])
+        os.execvp(tail_path, cmd)  # noqa: S606
+    elif system == "Linux":
+        journalctl_path = shutil.which("journalctl")
+        if not journalctl_path:
+            err_console.print("[red]Error: journalctl not found.[/red]")
+            raise typer.Exit(1)
+
+        cmd = [journalctl_path, "--user", "-u", "zfs-unlock"]
+        if follow:
+            cmd.append("-f")
+        os.execvp(journalctl_path, cmd)  # noqa: S606
+    else:
+        err_console.print(f"[red]Unsupported OS: {system}[/red]")
+        raise typer.Exit(1)
+
+
+def _load_config(config_path: Path | None) -> tuple[Path, Config]:
+    if config_path is None:
+        config_path = find_config()
+
+    if config_path is None or not config_path.exists():
+        err_console.print("[red]Config not found.[/red]")
+        err_console.print("\nCreate ~/.config/zfs-unlock/config.yaml:\n")
+        err_console.print(EXAMPLE_CONFIG)
+        raise typer.Exit(1)
+
+    return config_path, Config.from_yaml(config_path)
+
+
+@app.command()
+def lock(
+    config_path: Annotated[Path | None, typer.Option("--config", "-c", help="Config file path")] = None,
+    force: Annotated[bool, typer.Option("--force", "-f", help="Force unmount before locking")] = False,
+    dataset: Annotated[list[str] | None, typer.Option("--dataset", "-D", help="Filter by dataset path")] = None,
+) -> None:
+    """Lock configured datasets."""
+    config_path, config = _load_config(config_path)
+    console.print(f"[dim]{config_path}[/dim]")
+    asyncio.run(run_lock(config, force=force, dataset_filters=dataset))
+
+
+@app.command()
+def status(
+    config_path: Annotated[Path | None, typer.Option("--config", "-c", help="Config file path")] = None,
+    dataset: Annotated[list[str] | None, typer.Option("--dataset", "-D", help="Filter by dataset path")] = None,
+) -> None:
+    """Show lock status of configured datasets."""
+    config_path, config = _load_config(config_path)
+    console.print(f"[dim]{config_path}[/dim]")
+    asyncio.run(run_status(config, dataset_filters=dataset))
+
+
+@app.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def receiver(
+    ctx: typer.Context,
+    allow_file: Annotated[
+        Path,
+        typer.Option("--allow-file", help="File containing allowed dataset names"),
+    ] = Path("/etc/zfs-unlock/allowed-datasets"),
+) -> None:
+    """Run the restricted NAS-side receiver."""
+    args = list(ctx.args)
+    if not args:
+        original_command = os.environ.get("SSH_ORIGINAL_COMMAND", "")
+        args = parse_receiver_command(original_command) if original_command else []
+
+    response = Receiver(allow_file=allow_file).handle(args, stdin_text=sys.stdin.read())
+    if response.stdout:
+        sys.stdout.write(response.stdout)
+    if response.stderr:
+        sys.stderr.write(response.stderr)
+    raise typer.Exit(response.returncode)
+
+
+@app.callback(invoke_without_command=True)
+def main(
+    ctx: typer.Context,
+    config_path: Annotated[Path | None, typer.Option("--config", "-c", help="Config file path")] = None,
+    dry_run: Annotated[bool, typer.Option("--dry-run", "-n", help="Show what would be done")] = False,
+    daemon: Annotated[bool, typer.Option("--daemon", "-d", help="Run continuously")] = False,
+    interval: Annotated[int, typer.Option("--interval", "-i", help="Seconds between checks (1s if unreachable)")] = 30,
+    dataset: Annotated[list[str] | None, typer.Option("--dataset", "-D", help="Filter by dataset path")] = None,
+    version: Annotated[  # noqa: ARG001
+        bool | None,
+        typer.Option("--version", "-v", help="Show version and exit", callback=_version_callback, is_eager=True),
+    ] = None,
+) -> None:
+    """Unlock encrypted OpenZFS datasets."""
+    if ctx.invoked_subcommand is not None:
+        return
+
+    config_path, config = _load_config(config_path)
+    console.print(f"[dim]{config_path}[/dim]")
+
+    if daemon:
+        console.print(f"[bold]Running with smart polling (interval: {interval}s)[/bold]")
+        current_interval = interval
+        last_success = True
+
+        while True:
+            try:
+                success = asyncio.run(run_unlock(config, dry_run=dry_run, quiet=True, dataset_filters=dataset))
+                if success:
+                    if not last_success:
+                        console.print("[green]Connection restored.[/green]")
+                    current_interval = interval
+                else:
+                    if last_success:
+                        console.print(
+                            "[yellow]Connection lost/unstable. Switching to panic mode (1s interval).[/yellow]",
+                        )
+                    current_interval = 1
+
+                last_success = success
+                time.sleep(current_interval)
+            except KeyboardInterrupt:
+                console.print("\n[bold]Stopped[/bold]")
+                break
+    else:
+        asyncio.run(run_unlock(config, dry_run=dry_run, dataset_filters=dataset))
+
+
+if __name__ == "__main__":
+    app()

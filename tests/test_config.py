@@ -7,6 +7,11 @@ import pytest
 
 from zfs_unlock import Config, Dataset, SecretsMode, resolve_secret
 
+DEFAULT_PORT = 22
+DEFAULT_CONNECT_TIMEOUT = 5
+CUSTOM_PORT = 2222
+CUSTOM_CONNECT_TIMEOUT = 9
+
 
 class TestResolveSecret:
     """Tests for resolve_secret function."""
@@ -89,9 +94,9 @@ class TestConfig:
 
         assert config.host == "nas.local"
         assert config.user == "zfs-unlock"
-        assert config.port == 22
+        assert config.port == DEFAULT_PORT
         assert config.identity_file is None
-        assert config.connect_timeout == 5
+        assert config.connect_timeout == DEFAULT_CONNECT_TIMEOUT
         assert config.secrets == SecretsMode.AUTO
         assert len(config.datasets) == 1
         assert config.datasets[0].get_passphrase(config.secrets) == "my-passphrase"
@@ -108,9 +113,9 @@ class TestConfig:
             dedent(f"""\
             host: nas.local
             user: unlocker
-            port: 2222
+            port: {CUSTOM_PORT}
             identity_file: {identity_file}
-            connect_timeout: 9
+            connect_timeout: {CUSTOM_CONNECT_TIMEOUT}
             secrets: files
             datasets:
               tank/photos: {ds_key_file}
@@ -120,7 +125,7 @@ class TestConfig:
         config = Config.from_yaml(config_file)
 
         assert config.user == "unlocker"
-        assert config.port == 2222
+        assert config.port == CUSTOM_PORT
         assert config.identity_file == identity_file
-        assert config.connect_timeout == 9
+        assert config.connect_timeout == CUSTOM_CONNECT_TIMEOUT
         assert config.datasets[0].get_passphrase(config.secrets) == "test-passphrase"

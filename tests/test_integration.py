@@ -11,10 +11,12 @@ class RecordingRunner:
     """Async runner that records calls and returns queued results."""
 
     def __init__(self, *results: CommandResult) -> None:
+        """Initialize with queued command results."""
         self.results = list(results)
         self.calls: list[tuple[list[str], str | None]] = []
 
     async def run(self, args: list[str], *, input_text: str | None = None) -> CommandResult:
+        """Record a command and return the next queued result."""
         self.calls.append((args, input_text))
         if not self.results:
             return CommandResult(returncode=0, stdout="", stderr="")
