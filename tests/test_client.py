@@ -63,6 +63,7 @@ def test_run_remote_builds_ssh_command_with_identity_file(tmp_path: Path) -> Non
                 "BatchMode=yes",
                 "-o",
                 "ConnectTimeout=5",
+                "-n",
                 "-o",
                 "IdentitiesOnly=yes",
                 "-i",
@@ -74,6 +75,19 @@ def test_run_remote_builds_ssh_command_with_identity_file(tmp_path: Path) -> Non
             12,
         ),
     ]
+
+
+def test_unlock_keeps_stdin_open_for_passphrase() -> None:
+    """Unlock must not pass -n because the passphrase is sent over stdin."""
+    config = Config(host="nas.local", datasets=[Dataset(path="tank/photos", secret="secret-pass")])
+    runner = RecordingRunner(CommandResult(returncode=0, stdout="unlocked tank/photos\n", stderr=""))
+    client = ZfsUnlockClient(config, runner=runner)
+
+    assert asyncio.run(client.unlock(config.datasets[0])) is True
+
+    args, input_text, _ = runner.calls[0]
+    assert "-n" not in args
+    assert input_text == "secret-pass\n"
 
 
 def test_subprocess_runner_returns_timeout_for_hanging_command() -> None:

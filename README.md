@@ -7,7 +7,9 @@
 
 <img src="docs/logo.svg" alt="ZFS Unlock Logo" align="right" width="120" />
 
-Unlock encrypted OpenZFS datasets over a restricted SSH receiver.
+Unlock encrypted OpenZFS datasets over SSH,
+through a restricted NAS-side receiver,
+with passphrases kept on a separate trusted machine.
 
 ## Why?
 
@@ -132,6 +134,26 @@ The module creates the `zfs-unlock` SSH user, forced command, sudo rule,
 receiver wrapper, login shell, and `/etc/zfs-unlock/allowed-datasets`. The
 receiver still checks each requested dataset against that allowlist.
 
+On a NixOS unlock device, include the client module and enable the daemon:
+
+```nix
+{
+  imports = [
+    zfs-unlock.nixosModules.client
+  ];
+
+  services.zfsUnlock.client = {
+    enable = true;
+    user = "alice";
+    group = "users";
+  };
+}
+```
+
+The client module creates a `zfs-unlock.service` system service, runs the
+packaged `zfs-unlock` executable, adds OpenSSH to the service `PATH`, and sets
+`HOME`/`XDG_CONFIG_HOME` so the normal user config is found.
+
 After rebuilding the NAS, verify the client and receiver path:
 
 ```bash
@@ -156,7 +178,21 @@ zfs-unlock --dry-run
 
 # Check config, key, network, and receiver status
 zfs-unlock doctor
+
+# Show configured dataset status
+zfs-unlock status
+
+# Lock a dataset after its services have stopped using it
+zfs-unlock lock -D tank/photos
+
+# Force recursive unmount before unloading the key
+zfs-unlock lock --force -D tank/photos
 ```
+
+`zfs-unlock lock` can fail with `Key unload error: '<dataset>' is busy` when a
+service still has files open on that dataset. Stop the service first, or use
+`--force` when you intentionally want to unmount the dataset and disrupt those
+processes.
 
 ## CLI
 
@@ -181,25 +217,23 @@ zfs-unlock --help
 
  Unlock OpenZFS datasets over a restricted SSH receiver
 
-╭─ Options ────────────────────────────────────────────────────────────────────╮
-│ --config    -c      PATH     Config file path                                │
-│ --dry-run   -n               Show what would be done                         │
-│ --daemon    -d               Run continuously                                │
-│ --interval  -i      INTEGER  Seconds between checks (1s if unreachable)      │
-│                              [default: 30]                                   │
-│ --dataset   -D      TEXT     Filter by dataset path                          │
-│ --version   -v               Show version and exit                           │
-│ --help      -h               Show this message and exit.                     │
-╰──────────────────────────────────────────────────────────────────────────────╯
-╭─ Commands ───────────────────────────────────────────────────────────────────╮
-│ keygen    Generate a dedicated SSH key for zfs-unlock.                       │
-│ doctor    Check client config, SSH key, host reachability, and receiver      │
-│           status.                                                            │
-│ lock      Lock configured datasets.                                          │
-│ status    Show lock status of configured datasets.                           │
-│ receiver  Run the restricted NAS-side receiver.                              │
-│ service   Manage system service                                              │
-╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ Options ──────────────────────────────────────────────────────────────────────────────╮
+│ --config    -c      PATH     Config file path                                          │
+│ --dry-run   -n               Show what would be done                                   │
+│ --daemon    -d               Run continuously                                          │
+│ --interval  -i      INTEGER  Seconds between checks (1s if unreachable) [default: 30]  │
+│ --dataset   -D      TEXT     Filter by dataset path                                    │
+│ --version   -v               Show version and exit                                     │
+│ --help      -h               Show this message and exit.                               │
+╰────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Commands ─────────────────────────────────────────────────────────────────────────────╮
+│ keygen    Generate a dedicated SSH key for zfs-unlock.                                 │
+│ doctor    Check client config, SSH key, host reachability, and receiver status.        │
+│ lock      Lock configured datasets.                                                    │
+│ status    Show lock status of configured datasets.                                     │
+│ receiver  Run the restricted NAS-side receiver.                                        │
+│ service   Manage system service                                                        │
+╰────────────────────────────────────────────────────────────────────────────────────────╯
 
 ```
 
@@ -207,7 +241,9 @@ zfs-unlock --help
 
 ## Running as a Service
 
-Requires [uv](https://docs.astral.sh/uv/) to be installed. Auto-detects Linux (systemd) or macOS (launchd):
+On NixOS, prefer the `services.zfsUnlock.client` module shown above. The
+portable CLI installer requires [uv](https://docs.astral.sh/uv/) and
+auto-detects Linux (systemd) or macOS (launchd):
 
 ```bash
 # Install and start

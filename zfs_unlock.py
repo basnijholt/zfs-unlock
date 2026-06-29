@@ -383,7 +383,7 @@ class ZfsUnlockClient:
         self.config = config
         self.runner = runner or SubprocessRunner()
 
-    def _ssh_args(self, remote_args: list[str]) -> list[str]:
+    def _ssh_args(self, remote_args: list[str], *, close_stdin: bool = False) -> list[str]:
         args = [
             "ssh",
             "-p",
@@ -393,6 +393,8 @@ class ZfsUnlockClient:
             "-o",
             f"ConnectTimeout={self.config.connect_timeout}",
         ]
+        if close_stdin:
+            args.append("-n")
         if self.config.identity_file is not None:
             args.extend(["-o", "IdentitiesOnly=yes", "-i", str(self.config.identity_file.expanduser())])
         args.extend([f"{self.config.user}@{self.config.host}", shlex.join(remote_args)])
@@ -401,7 +403,7 @@ class ZfsUnlockClient:
     async def run_remote(self, remote_args: list[str], *, input_text: str | None = None) -> CommandResult:
         """Run a receiver command over SSH."""
         return await self.runner.run(
-            self._ssh_args(remote_args),
+            self._ssh_args(remote_args, close_stdin=input_text is None),
             input_text=input_text,
             command_timeout=self.config.command_timeout,
         )

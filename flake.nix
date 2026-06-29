@@ -18,13 +18,7 @@
         let
           pkgs = import nixpkgs { inherit system; };
           pythonPackages = pkgs.python3Packages;
-          version =
-            if self ? shortRev then
-              "0.0.0+${self.shortRev}"
-            else if self ? dirtyShortRev then
-              "0.0.0+${self.dirtyShortRev}"
-            else
-              "0.0.0+dirty";
+          version = builtins.replaceStrings [ "\n" "\r" ] [ "" "" ] (builtins.readFile ./VERSION);
         in
         {
           default = pythonPackages.buildPythonApplication {
@@ -70,6 +64,12 @@
           {
             imports = [ ./nix/nixos-module.nix ];
             services.zfsUnlock.receiver.package = lib.mkDefault self.packages.${pkgs.system}.default;
+          };
+        client =
+          { lib, pkgs, ... }:
+          {
+            imports = [ ./nix/client-module.nix ];
+            services.zfsUnlock.client.package = lib.mkDefault self.packages.${pkgs.system}.default;
           };
       };
 
