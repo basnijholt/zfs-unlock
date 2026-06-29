@@ -9,6 +9,7 @@ import platform
 import re
 import shlex
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -41,6 +42,7 @@ CONFIG_SEARCH_PATHS = [
     Path.home() / ".config" / "zfs-unlock" / "config.yaml",
     Path.home() / ".config" / "zfs-unlock" / "config.yml",
 ]
+DEFAULT_IDENTITY_FILE = Path("~/.ssh/zfs-unlock-nas")
 
 EXAMPLE_CONFIG = """\
 host: nas.local
@@ -539,6 +541,124 @@ def _get_uv_path() -> Path | None:
 def _run(cmd: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
     """Run a command and return the result."""
     return subprocess.run(cmd, capture_output=True, text=True, check=check)
+
+
+def _check_ok(message: str) -> None:
+    console.print(f"[green]OK[/green] {message}", soft_wrap=True)
+
+
+def _check_fail(message: str) -> None:
+    console.print(f"[red]FAIL[/red] {message}", soft_wrap=True)
+
+
+def _check_identity_file(identity_file: Path | None) -> bool:
+    if identity_file is None:
+        console.print("[yellow]WARN[/yellow] identity file not configured; SSH defaults will be used")
+        return True
+
+    identity_path = identity_file.expanduser()
+    if not identity_path.exists():
+        _check_fail(f"identity file missing: {identity_path}")
+        return False
+
+    _check_ok(f"identity file exists: {identity_path}")
+    return True
+
+
+def _check_host_reachable(config: Config) -> bool:
+    ok = True
+    try:
+        socket.getaddrinfo(config.host, config.port)
+    except OSError as exc:
+        _check_fail(f"host resolution failed for {config.host}: {exc}")
+        ok = False
+    else:
+        _check_ok(f"host resolves: {config.host}")
+
+    try:
+        with socket.create_connection((config.host, config.port), timeout=config.connect_timeout):
+            pass
+    except OSError as exc:
+        _check_fail(f"tcp connect failed for {config.host}:{config.port}: {exc}")
+        ok = False
+    else:
+        _check_ok(f"tcp connect ok: {config.host}:{config.port}")
+
+    return ok
+
+
+def _select_doctor_dataset(datasets: list[Dataset], dataset: str | None) -> Dataset | None:
+    if dataset is None:
+        return datasets[0] if datasets else None
+
+    for configured in datasets:
+        if configured.path == dataset:
+            return configured
+
+    _check_fail(f"dataset not configured: {dataset}")
+    raise typer.Exit(1)
+
+
+async def _check_receiver_status(config: Config, dataset: Dataset) -> bool:
+    result = await ZfsUnlockClient(config).run_remote(["status", dataset.path])
+    if result.returncode == 0:
+        _check_ok(f"receiver status ok: {dataset.path} -> {result.stdout.strip()}")
+        return True
+
+    _check_fail(f"receiver status failed: {result.stderr.strip()}")
+    return False
+
+
+@app.command()
+def keygen(
+    identity_file: Annotated[
+        Path,
+        typer.Option("--identity-file", "-i", help="SSH identity file to create"),
+    ] = DEFAULT_IDENTITY_FILE,
+    comment: Annotated[str, typer.Option("--comment", "-C", help="SSH key comment")] = "zfs-unlock",
+    overwrite: Annotated[bool, typer.Option("--overwrite", help="Replace an existing key")] = False,
+) -> None:
+    """Generate a dedicated SSH key for zfs-unlock."""
+    ssh_keygen = shutil.which("ssh-keygen")
+    if not ssh_keygen:
+        err_console.print("[red]Error: ssh-keygen not found.[/red]")
+        raise typer.Exit(1)
+
+    identity_path = identity_file.expanduser()
+    public_path = Path(f"{identity_path}.pub")
+    if not overwrite and (identity_path.exists() or public_path.exists()):
+        err_console.print(f"[red]Refusing to overwrite existing key: {identity_path}[/red]")
+        raise typer.Exit(1)
+
+    identity_path.parent.mkdir(parents=True, exist_ok=True)
+    _run([ssh_keygen, "-t", "ed25519", "-N", "", "-C", comment, "-f", str(identity_path)])
+    identity_path.chmod(0o600)
+    public_path.chmod(0o644)
+
+    public_key = public_path.read_text().strip()
+    _check_ok(f"created {identity_path}")
+    console.print("\nPublic key for services.zfsUnlock.receiver.authorizedKeys:\n")
+    console.print(public_key)
+
+
+@app.command()
+def doctor(
+    config_path: Annotated[Path | None, typer.Option("--config", "-c", help="Config file path")] = None,
+    dataset: Annotated[str | None, typer.Option("--dataset", "-D", help="Dataset to check")] = None,
+) -> None:
+    """Check client config, SSH key, host reachability, and receiver status."""
+    config_path, config = _load_config(config_path)
+    console.print(f"[dim]{config_path}[/dim]", soft_wrap=True)
+    _check_ok("config parsed")
+
+    if not _check_identity_file(config.identity_file):
+        raise typer.Exit(1)
+
+    ok = _check_host_reachable(config)
+    check_dataset = _select_doctor_dataset(config.datasets, dataset)
+    if ok and check_dataset is not None:
+        ok = asyncio.run(_check_receiver_status(config, check_dataset))
+    raise typer.Exit(0 if ok else 1)
 
 
 @service_app.command("install")

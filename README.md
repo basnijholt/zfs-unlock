@@ -64,7 +64,14 @@ pip install zfs-unlock
 
 ## Setup
 
-Create `~/.config/zfs-unlock/config.yaml` on the off-box unlock device:
+Generate a dedicated SSH key on the off-box unlock device:
+
+```bash
+zfs-unlock keygen --identity-file ~/.ssh/zfs-unlock-nas --comment pi4-zfs-unlock
+```
+
+Add the printed public key to the NAS-side `authorizedKeys` list below, then
+create `~/.config/zfs-unlock/config.yaml` on the off-box unlock device:
 
 ```yaml
 host: nas.local
@@ -121,8 +128,14 @@ Then configure only the receiver policy on the NAS:
 ```
 
 The module creates the `zfs-unlock` SSH user, forced command, sudo rule,
-receiver wrapper, and `/etc/zfs-unlock/allowed-datasets`. The receiver still
-checks each requested dataset against that allowlist.
+receiver wrapper, login shell, and `/etc/zfs-unlock/allowed-datasets`. The
+receiver still checks each requested dataset against that allowlist.
+
+After rebuilding the NAS, verify the client and receiver path:
+
+```bash
+zfs-unlock doctor
+```
 
 ## Usage
 
@@ -139,6 +152,9 @@ zfs-unlock --daemon --interval 60
 
 # Dry run
 zfs-unlock --dry-run
+
+# Check config, key, network, and receiver status
+zfs-unlock doctor
 ```
 
 ## CLI
@@ -152,7 +168,7 @@ zfs-unlock --help
 <!-- export TERM=dumb -->
 <!-- export TERMINAL_WIDTH=90 -->
 <!-- echo '```bash' -->
-<!-- zfs-unlock --help -->
+<!-- uv run zfs-unlock --help -->
 <!-- echo '```' -->
 <!-- CODE:END -->
 
@@ -164,22 +180,23 @@ zfs-unlock --help
 
  Unlock OpenZFS datasets over a restricted SSH receiver
 
-╭─ Options ────────────────────────────────────────────────────────────────────╮
-│ --config    -c      PATH     Config file path                                │
-│ --dry-run   -n               Show what would be done                         │
-│ --daemon    -d               Run continuously                                │
-│ --interval  -i      INTEGER  Seconds between checks (1s if unreachable)      │
-│                              [default: 30]                                   │
-│ --dataset   -D      TEXT     Filter by dataset path                          │
-│ --version   -v               Show version and exit                           │
-│ --help      -h               Show this message and exit.                     │
-╰──────────────────────────────────────────────────────────────────────────────╯
-╭─ Commands ───────────────────────────────────────────────────────────────────╮
-│ lock      Lock configured datasets.                                          │
-│ status    Show lock status of configured datasets.                           │
-│ receiver  Run the restricted NAS-side receiver.                              │
-│ service   Manage system service                                              │
-╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ Options ──────────────────────────────────────────────────────────────────────────────╮
+│ --config    -c      PATH     Config file path                                          │
+│ --dry-run   -n               Show what would be done                                   │
+│ --daemon    -d               Run continuously                                          │
+│ --interval  -i      INTEGER  Seconds between checks (1s if unreachable) [default: 30]  │
+│ --dataset   -D      TEXT     Filter by dataset path                                    │
+│ --version   -v               Show version and exit                                     │
+│ --help      -h               Show this message and exit.                               │
+╰────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Commands ─────────────────────────────────────────────────────────────────────────────╮
+│ keygen    Generate a dedicated SSH key for zfs-unlock.                                 │
+│ doctor    Check client config, SSH key, host reachability, and receiver status.        │
+│ lock      Lock configured datasets.                                                    │
+│ status    Show lock status of configured datasets.                                     │
+│ receiver  Run the restricted NAS-side receiver.                                        │
+│ service   Manage system service                                                        │
+╰────────────────────────────────────────────────────────────────────────────────────────╯
 
 ```
 

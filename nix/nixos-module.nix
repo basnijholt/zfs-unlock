@@ -58,6 +58,13 @@ in
       description = "Home directory for the receiver user.";
     };
 
+    shell = lib.mkOption {
+      type = lib.types.str;
+      default = pkgs.runtimeShell;
+      defaultText = lib.literalExpression "pkgs.runtimeShell";
+      description = "Login shell used by OpenSSH to execute the forced receiver command.";
+    };
+
     allowedFrom = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = [ ];
@@ -108,6 +115,7 @@ in
       group = cfg.group;
       home = cfg.home;
       createHome = true;
+      shell = cfg.shell;
       openssh.authorizedKeys.keys = map forcedCommandKey cfg.authorizedKeys;
     };
 

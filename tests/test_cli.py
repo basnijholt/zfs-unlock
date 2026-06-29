@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from typer.testing import CliRunner
 
@@ -202,6 +202,68 @@ def test_cli_receiver_passes_zfs_path(tmp_path: Path) -> None:
     assert result.exit_code == 0
     receiver_cls.assert_called_once_with(allow_file=allow_file, zfs_path="/run/current-system/sw/bin/zfs")
     receiver_cls.return_value.handle.assert_called_once_with(["status", "tank/photos"], stdin_text="")
+
+
+def test_doctor_reports_missing_identity_file(tmp_path: Path) -> None:
+    """Doctor reports the configured identity file before trying SSH."""
+    config_file = tmp_path / "config.yaml"
+    missing_key = tmp_path / "missing-key"
+    config_file.write_text(f"host: 192.0.2.1\nidentity_file: {missing_key}\ndatasets:\n  tank/ds: pass")
+
+    result = runner.invoke(app, ["doctor", "--config", str(config_file)])
+
+    assert result.exit_code == 1
+    assert "identity file missing" in result.stdout
+    assert str(missing_key) in result.stdout
+
+
+def test_doctor_checks_receiver_status(tmp_path: Path) -> None:
+    """Doctor checks the receiver using a status command for one dataset."""
+    config_file = tmp_path / "config.yaml"
+    key = tmp_path / "zfs-unlock-nas"
+    key.write_text("secret")
+    config_file.write_text(f"host: 192.0.2.1\nidentity_file: {key}\ndatasets:\n  tank/ds: pass")
+
+    with (
+        patch("socket.getaddrinfo", return_value=[object()]),
+        patch("socket.create_connection") as create_connection,
+        patch("zfs_unlock.ZfsUnlockClient") as client_cls,
+    ):
+        create_connection.return_value.__enter__.return_value = object()
+        client_cls.return_value.run_remote = AsyncMock(
+            return_value=MagicMock(returncode=0, stdout="locked\n", stderr=""),
+        )
+        result = runner.invoke(app, ["doctor", "--config", str(config_file)])
+
+    assert result.exit_code == 0
+    client_cls.return_value.run_remote.assert_called_once_with(["status", "tank/ds"])
+    assert "receiver status ok" in result.stdout
+
+
+def test_keygen_creates_unlock_key(tmp_path: Path) -> None:
+    """Keygen creates an ed25519 key and prints the public key."""
+    key_path = tmp_path / "zfs-unlock-nas"
+
+    def fake_run(cmd: list[str], *, check: bool = True) -> MagicMock:
+        assert check is True
+        assert "-t" in cmd
+        assert "ed25519" in cmd
+        assert "-f" in cmd
+        assert cmd[cmd.index("-f") + 1] == str(key_path)
+        key_path.write_text("private")
+        Path(f"{key_path}.pub").write_text("ssh-ed25519 AAAATEST zfs-unlock\n")
+        return MagicMock(stdout="", stderr="", returncode=0)
+
+    with (
+        patch("shutil.which", return_value="/usr/bin/ssh-keygen"),
+        patch("zfs_unlock._run", side_effect=fake_run),
+    ):
+        result = runner.invoke(app, ["keygen", "--identity-file", str(key_path), "--comment", "zfs-unlock"])
+
+    assert result.exit_code == 0
+    assert "ssh-ed25519 AAAATEST zfs-unlock" in result.stdout
+    assert key_path.exists()
+    assert Path(f"{key_path}.pub").exists()
 
 
 def test_service_status_linux() -> None:

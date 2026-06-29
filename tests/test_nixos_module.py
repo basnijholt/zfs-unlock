@@ -40,6 +40,7 @@ def test_nixos_receiver_module_generates_restricted_receiver_config() -> None:
       in {{
         allowedDatasets = eval.config.environment.etc."zfs-unlock/allowed-datasets".text;
         authorizedKeys = eval.config.users.users.zfs-unlock.openssh.authorizedKeys.keys;
+        shell = toString eval.config.users.users.zfs-unlock.shell;
         sudoUsers = builtins.map (rule: rule.users) eval.config.security.sudo.extraRules;
       }}
     """
@@ -69,4 +70,5 @@ def test_nixos_receiver_module_generates_restricted_receiver_config() -> None:
     assert data["authorizedKeys"][0].endswith(
         '" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestOnlyKey pi4-zfs-unlock',
     )
+    assert data["shell"].endswith("/bin/bash")
     assert ["zfs-unlock"] in data["sudoUsers"]
