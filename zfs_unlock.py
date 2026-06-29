@@ -36,6 +36,7 @@ err_console = Console(stderr=True)
 
 DATASET_NAME_RE = re.compile(r"^[A-Za-z0-9_.:-]+(?:/[A-Za-z0-9_.:-]+)*$")
 COMMAND_TIMEOUT_RETURNCODE = 124
+RECEIVER_UNLOCK_ARG_COUNT = 2
 
 CONFIG_SEARCH_PATHS = [
     Path("config.yaml"),
@@ -939,7 +940,8 @@ def receiver(
         original_command = os.environ.get("SSH_ORIGINAL_COMMAND", "")
         args = parse_receiver_command(original_command) if original_command else []
 
-    response = Receiver(allow_file=allow_file, zfs_path=zfs_path).handle(args, stdin_text=sys.stdin.read())
+    stdin_text = sys.stdin.read() if len(args) == RECEIVER_UNLOCK_ARG_COUNT and args[0] == "unlock" else ""
+    response = Receiver(allow_file=allow_file, zfs_path=zfs_path).handle(args, stdin_text=stdin_text)
     if response.stdout:
         sys.stdout.write(response.stdout)
     if response.stderr:

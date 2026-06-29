@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+import typer
 from typer.testing import CliRunner
 
-from zfs_unlock import Dataset, app, filter_datasets, find_config
+from zfs_unlock import Dataset, app, filter_datasets, find_config, receiver
 
 runner = CliRunner()
 DAEMON_RUN_CALLS = 3
@@ -177,6 +180,43 @@ def test_cli_receiver_parses_single_wrapped_command_argument(tmp_path: Path) -> 
     assert result.exit_code == 0
     assert result.stdout == "locked\n"
     receiver_cls.return_value.handle.assert_called_once_with(["status", "tank/photos"], stdin_text="")
+
+
+def test_cli_receiver_status_does_not_read_stdin(tmp_path: Path) -> None:
+    """Receiver status must not block on stdin from an interactive SSH client."""
+    allow_file = tmp_path / "allowed"
+    allow_file.write_text("tank/photos\n")
+    response = MagicMock(returncode=0, stdout="locked\n", stderr="")
+
+    with (
+        patch("zfs_unlock.sys.stdin.read", side_effect=AssertionError("stdin should not be read")),
+        patch("zfs_unlock.Receiver") as receiver_cls,
+    ):
+        receiver_cls.return_value.handle.return_value = response
+        with pytest.raises(typer.Exit) as exc_info:
+            receiver(SimpleNamespace(args=["status tank/photos"]), allow_file=allow_file)
+
+    assert exc_info.value.exit_code == 0
+    receiver_cls.return_value.handle.assert_called_once_with(["status", "tank/photos"], stdin_text="")
+
+
+def test_cli_receiver_unlock_reads_stdin(tmp_path: Path) -> None:
+    """Receiver unlock reads stdin so the passphrase reaches zfs load-key."""
+    allow_file = tmp_path / "allowed"
+    allow_file.write_text("tank/photos\n")
+    response = MagicMock(returncode=0, stdout="unlocked\n", stderr="")
+
+    with (
+        patch("zfs_unlock.sys.stdin.read", return_value="secret\n") as stdin_read,
+        patch("zfs_unlock.Receiver") as receiver_cls,
+    ):
+        receiver_cls.return_value.handle.return_value = response
+        with pytest.raises(typer.Exit) as exc_info:
+            receiver(SimpleNamespace(args=["unlock tank/photos"]), allow_file=allow_file)
+
+    assert exc_info.value.exit_code == 0
+    stdin_read.assert_called_once_with()
+    receiver_cls.return_value.handle.assert_called_once_with(["unlock", "tank/photos"], stdin_text="secret\n")
 
 
 def test_cli_receiver_passes_zfs_path(tmp_path: Path) -> None:
