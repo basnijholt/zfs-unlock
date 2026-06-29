@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -14,6 +15,7 @@ from zfs_unlock import Dataset, app, filter_datasets, find_config, receiver
 
 runner = CliRunner()
 DAEMON_RUN_CALLS = 3
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 
 def write_private_file(path: Path, text: str = "secret") -> Path:
@@ -78,13 +80,28 @@ def test_cli_help() -> None:
 
 def test_cli_help_groups_commands() -> None:
     """Top-level help groups commands by operator workflow."""
-    result = runner.invoke(app, ["--help"])
+    result = runner.invoke(app, ["--help"], color=True)
+    stdout = ANSI_RE.sub("", result.stdout)
 
     assert result.exit_code == 0
-    assert "Client Commands" in result.stdout
-    assert "Setup Commands" in result.stdout
-    assert "Receiver Commands" in result.stdout
-    assert "Service Commands" in result.stdout
+    assert "Client Commands" in stdout
+    assert "Setup Commands" in stdout
+    assert "Receiver Commands" in stdout
+    assert "Service Commands" in stdout
+    assert stdout.index("Client Commands") < stdout.index("Setup Commands")
+    assert stdout.index("Setup Commands") < stdout.index("Receiver Commands")
+    assert stdout.index("Receiver Commands") < stdout.index("Service Commands")
+    command_rows = []
+    for line in stdout.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("│ "):
+            continue
+
+        command = stripped.removeprefix("│ ").split()[0]
+        if command in {"unlock", "lock", "status", "doctor", "keygen", "receiver", "service"}:
+            command_rows.append(command)
+
+    assert command_rows == ["unlock", "lock", "status", "doctor", "keygen", "receiver", "service"]
 
 
 def test_cli_without_subcommand_shows_help() -> None:
