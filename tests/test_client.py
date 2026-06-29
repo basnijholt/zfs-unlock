@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 from typing import TYPE_CHECKING
 
-from zfs_unlock import CommandResult, Config, Dataset, ZfsUnlockClient
+from zfs_unlock import COMMAND_TIMEOUT_RETURNCODE, CommandResult, Config, Dataset, SubprocessRunner, ZfsUnlockClient
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -19,11 +20,17 @@ class RecordingRunner:
     def __init__(self, *results: CommandResult) -> None:
         """Initialize with queued command results."""
         self.results = list(results)
-        self.calls: list[tuple[list[str], str | None]] = []
+        self.calls: list[tuple[list[str], str | None, float | None]] = []
 
-    async def run(self, args: list[str], *, input_text: str | None = None) -> CommandResult:
+    async def run(
+        self,
+        args: list[str],
+        *,
+        input_text: str | None = None,
+        command_timeout: float | None = None,
+    ) -> CommandResult:
         """Record a command and return the next queued result."""
-        self.calls.append((args, input_text))
+        self.calls.append((args, input_text, command_timeout))
         if not self.results:
             return CommandResult(returncode=0, stdout="", stderr="")
         return self.results.pop(0)
@@ -37,6 +44,7 @@ def test_run_remote_builds_ssh_command_with_identity_file(tmp_path: Path) -> Non
         user="unlocker",
         port=CUSTOM_SSH_PORT,
         identity_file=identity_file,
+        command_timeout=12,
         datasets=[],
     )
     runner = RecordingRunner(CommandResult(returncode=0, stdout="unlocked\n", stderr=""))
@@ -61,8 +69,21 @@ def test_run_remote_builds_ssh_command_with_identity_file(tmp_path: Path) -> Non
                 "status tank/photos",
             ],
             None,
+            12,
         ),
     ]
+
+
+def test_subprocess_runner_returns_timeout_for_hanging_command() -> None:
+    """SubprocessRunner returns a timeout result instead of hanging forever."""
+    runner = SubprocessRunner()
+
+    result = asyncio.run(
+        runner.run([sys.executable, "-c", "import time; time.sleep(10)"], command_timeout=0.01),
+    )
+
+    assert result.returncode == COMMAND_TIMEOUT_RETURNCODE
+    assert "timed out after 0.01s" in result.stderr
 
 
 def test_is_locked_maps_receiver_status() -> None:
@@ -103,6 +124,7 @@ def test_unlock_sends_passphrase_over_stdin() -> None:
                 "unlock tank/photos",
             ],
             "secret-pass\n",
+            30,
         ),
     ]
 

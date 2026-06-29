@@ -237,6 +237,7 @@ def test_doctor_checks_receiver_status(tmp_path: Path) -> None:
 
     assert result.exit_code == 0
     client_cls.return_value.run_remote.assert_called_once_with(["status", "tank/ds"])
+    assert "checking receiver status: tank/ds" in result.stdout
     assert "receiver status ok" in result.stdout
 
 

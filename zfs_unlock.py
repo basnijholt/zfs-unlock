@@ -35,6 +35,7 @@ console = Console()
 err_console = Console(stderr=True)
 
 DATASET_NAME_RE = re.compile(r"^[A-Za-z0-9_.:-]+(?:/[A-Za-z0-9_.:-]+)*$")
+COMMAND_TIMEOUT_RETURNCODE = 124
 
 CONFIG_SEARCH_PATHS = [
     Path("config.yaml"),
@@ -50,6 +51,7 @@ user: zfs-unlock
 # port: 22
 # identity_file: ~/.ssh/zfs-unlock-nas
 # connect_timeout: 5
+# command_timeout: 30
 # secrets: auto  # auto (default), files, or inline
 
 datasets:
@@ -153,6 +155,7 @@ class Config(BaseModel):
     port: int = 22
     identity_file: Path | None = None
     connect_timeout: int = 5
+    command_timeout: float = 30
     secrets: SecretsMode = SecretsMode.AUTO
     datasets: list[Dataset]
 
@@ -178,14 +181,26 @@ class CommandResult:
 class CommandRunner(Protocol):
     """Async command runner protocol."""
 
-    async def run(self, args: list[str], *, input_text: str | None = None) -> CommandResult:
+    async def run(
+        self,
+        args: list[str],
+        *,
+        input_text: str | None = None,
+        command_timeout: float | None = None,
+    ) -> CommandResult:
         """Run a command and return its result."""
 
 
 class SubprocessRunner:
     """Run commands through asyncio subprocesses."""
 
-    async def run(self, args: list[str], *, input_text: str | None = None) -> CommandResult:
+    async def run(
+        self,
+        args: list[str],
+        *,
+        input_text: str | None = None,
+        command_timeout: float | None = None,
+    ) -> CommandResult:
         """Run a command and capture stdout/stderr."""
         process = await asyncio.create_subprocess_exec(
             *args,
@@ -193,7 +208,25 @@ class SubprocessRunner:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await process.communicate(None if input_text is None else input_text.encode())
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(None if input_text is None else input_text.encode()),
+                timeout=command_timeout,
+            )
+        except TimeoutError:
+            if process.returncode is None:
+                process.kill()
+            stdout, stderr = await process.communicate()
+            return CommandResult(
+                returncode=COMMAND_TIMEOUT_RETURNCODE,
+                stdout=stdout.decode(errors="replace"),
+                stderr=f"command timed out after {command_timeout:g}s\n{stderr.decode(errors='replace')}",
+            )
+        except asyncio.CancelledError:
+            if process.returncode is None:
+                process.kill()
+            await process.communicate()
+            raise
         returncode = process.returncode if process.returncode is not None else 1
         return CommandResult(
             returncode=returncode,
@@ -366,7 +399,11 @@ class ZfsUnlockClient:
 
     async def run_remote(self, remote_args: list[str], *, input_text: str | None = None) -> CommandResult:
         """Run a receiver command over SSH."""
-        return await self.runner.run(self._ssh_args(remote_args), input_text=input_text)
+        return await self.runner.run(
+            self._ssh_args(remote_args),
+            input_text=input_text,
+            command_timeout=self.config.command_timeout,
+        )
 
     async def is_locked(self, dataset: Dataset, *, quiet: bool = False) -> bool | None:
         """Check whether a dataset key is unavailable."""
@@ -600,6 +637,7 @@ def _select_doctor_dataset(datasets: list[Dataset], dataset: str | None) -> Data
 
 
 async def _check_receiver_status(config: Config, dataset: Dataset) -> bool:
+    console.print(f"[dim]checking receiver status: {dataset.path}[/dim]", soft_wrap=True)
     result = await ZfsUnlockClient(config).run_remote(["status", dataset.path])
     if result.returncode == 0:
         _check_ok(f"receiver status ok: {dataset.path} -> {result.stdout.strip()}")

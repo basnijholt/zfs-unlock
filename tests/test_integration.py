@@ -15,7 +15,13 @@ class RecordingRunner:
         self.results = list(results)
         self.calls: list[tuple[list[str], str | None]] = []
 
-    async def run(self, args: list[str], *, input_text: str | None = None) -> CommandResult:
+    async def run(
+        self,
+        args: list[str],
+        *,
+        input_text: str | None = None,
+        command_timeout: float | None = None,  # noqa: ARG002
+    ) -> CommandResult:
         """Record a command and return the next queued result."""
         self.calls.append((args, input_text))
         if not self.results:

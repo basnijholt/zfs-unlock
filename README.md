@@ -77,6 +77,7 @@ create `~/.config/zfs-unlock/config.yaml` on the off-box unlock device:
 host: nas.local
 user: zfs-unlock
 identity_file: ~/.ssh/zfs-unlock-nas
+# command_timeout: 30
 
 # secrets: auto  # auto (default) | files | inline
 
