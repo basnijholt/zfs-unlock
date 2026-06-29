@@ -88,14 +88,17 @@ def test_cli_help_groups_commands() -> None:
     assert result.stdout.index("Client Commands") < result.stdout.index("Setup Commands")
     assert result.stdout.index("Setup Commands") < result.stdout.index("Receiver Commands")
     assert result.stdout.index("Receiver Commands") < result.stdout.index("Service Commands")
-    client_commands = [
-        "unlock    Unlock configured datasets.",
-        "lock      Lock configured datasets.",
-        "status    Show lock status of configured datasets.",
-        "doctor    Check client config",
-    ]
-    client_command_positions = [result.stdout.index(command) for command in client_commands]
-    assert client_command_positions == sorted(client_command_positions)
+    command_rows = []
+    for line in result.stdout.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("│ "):
+            continue
+
+        command = stripped.removeprefix("│ ").split()[0]
+        if command in {"unlock", "lock", "status", "doctor", "keygen", "receiver", "service"}:
+            command_rows.append(command)
+
+    assert command_rows == ["unlock", "lock", "status", "doctor", "keygen", "receiver", "service"]
 
 
 def test_cli_without_subcommand_shows_help() -> None:
