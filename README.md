@@ -151,8 +151,9 @@ On a NixOS unlock device, include the client module and enable the daemon:
 ```
 
 The client module creates a `zfs-unlock.service` system service, runs the
-packaged `zfs-unlock` executable, adds OpenSSH to the service `PATH`, and sets
-`HOME`/`XDG_CONFIG_HOME` so the normal user config is found.
+packaged `zfs-unlock` executable, installs that CLI into the system profile,
+adds OpenSSH to the service `PATH`, and sets `HOME`/`XDG_CONFIG_HOME` so the
+normal user config is found.
 
 After rebuilding the NAS, verify the client and receiver path:
 

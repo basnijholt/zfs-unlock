@@ -161,6 +161,7 @@ def test_nixos_client_module_generates_packaged_daemon_service() -> None:
         service = eval.config.systemd.services.zfs-unlock;
       in {{
         usesPackagedApp = eval.config.services.zfsUnlock.client.package.passthru.isZfsUnlockPackage or false;
+        systemPackages = builtins.map (pkg: pkg.pname or pkg.name) eval.config.environment.systemPackages;
         user = service.serviceConfig.User;
         group = service.serviceConfig.Group;
         execStart = service.serviceConfig.ExecStart;
@@ -188,6 +189,7 @@ def test_nixos_client_module_generates_packaged_daemon_service() -> None:
     assert result.returncode == 0, result.stderr
     data = json.loads(result.stdout)
     assert data["usesPackagedApp"] is True
+    assert "zfs-unlock" in data["systemPackages"]
     assert data["user"] == "alice"
     assert data["group"] == "users"
     assert "--daemon --interval 45" in data["execStart"]

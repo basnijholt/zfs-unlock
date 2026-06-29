@@ -66,6 +66,8 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    environment.systemPackages = [ cfg.package ];
+
     systemd.services.zfs-unlock = {
       description = "ZFS Unlock Daemon";
       after = [ "network-online.target" ];
