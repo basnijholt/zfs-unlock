@@ -15,7 +15,7 @@ let
 
   sshWrapper = pkgs.writeShellScript "zfs-unlock-ssh-wrapper" ''
     set -eu
-    exec ${pkgs.sudo}/bin/sudo -n ${receiver} "''${SSH_ORIGINAL_COMMAND-}"
+    exec ${config.security.wrapperDir}/sudo -n ${receiver} "''${SSH_ORIGINAL_COMMAND-}"
   '';
 
   forcedCommandKey = key: ''restrict,${fromOption}command="${sshWrapper}" ${key}'';

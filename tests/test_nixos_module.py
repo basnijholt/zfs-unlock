@@ -72,3 +72,12 @@ def test_nixos_receiver_module_generates_restricted_receiver_config() -> None:
     )
     assert data["shell"].endswith("/bin/bash")
     assert ["zfs-unlock"] in data["sudoUsers"]
+
+
+def test_nixos_receiver_wrapper_uses_setuid_sudo_wrapper() -> None:
+    """The forced SSH command must call NixOS's setuid sudo wrapper."""
+    repo = Path(__file__).resolve().parents[1]
+    module = (repo / "nix" / "nixos-module.nix").read_text()
+
+    assert "${config.security.wrapperDir}/sudo" in module
+    assert "${pkgs.sudo}/bin/sudo" not in module
