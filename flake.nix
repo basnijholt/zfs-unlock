@@ -13,9 +13,64 @@
       forAllSystems = nixpkgs.lib.genAttrs systems;
     in
     {
+      packages = forAllSystems (
+        system:
+        let
+          pkgs = import nixpkgs { inherit system; };
+          pythonPackages = pkgs.python3Packages;
+          version =
+            if self ? shortRev then
+              "0.0.0+${self.shortRev}"
+            else if self ? dirtyShortRev then
+              "0.0.0+${self.dirtyShortRev}"
+            else
+              "0.0.0+dirty";
+        in
+        {
+          default = pythonPackages.buildPythonApplication {
+            pname = "zfs-unlock";
+            inherit version;
+
+            pyproject = true;
+            src = self;
+
+            build-system = with pythonPackages; [
+              hatch-vcs
+              hatchling
+            ];
+
+            dependencies = with pythonPackages; [
+              pydantic
+              pyyaml
+              rich
+              typer
+            ];
+
+            SETUPTOOLS_SCM_PRETEND_VERSION = version;
+
+            pythonImportsCheck = [ "zfs_unlock" ];
+            doCheck = false;
+
+            passthru.isZfsUnlockPackage = true;
+
+            meta = {
+              description = "Unlock encrypted OpenZFS datasets over a restricted SSH receiver";
+              homepage = "https://github.com/basnijholt/zfs-unlock";
+              license = pkgs.lib.licenses.mit;
+              mainProgram = "zfs-unlock";
+            };
+          };
+        }
+      );
+
       nixosModules = {
         default = self.nixosModules.receiver;
-        receiver = import ./nix/nixos-module.nix;
+        receiver =
+          { lib, pkgs, ... }:
+          {
+            imports = [ ./nix/nixos-module.nix ];
+            services.zfsUnlock.receiver.package = lib.mkDefault self.packages.${pkgs.system}.default;
+          };
       };
 
       checks = forAllSystems (
