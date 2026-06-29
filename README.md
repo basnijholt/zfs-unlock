@@ -2,19 +2,19 @@
 
 [![PyPI](https://img.shields.io/pypi/v/zfs-unlock)](https://pypi.org/project/zfs-unlock/)
 [![Python](https://img.shields.io/pypi/pyversions/zfs-unlock)](https://pypi.org/project/zfs-unlock/)
+[![Nix](https://img.shields.io/badge/Nix-flake%20%2B%20NixOS%20modules-5277C3?logo=nixos&logoColor=white)](#setup)
 [![Tests](https://github.com/basnijholt/zfs-unlock/actions/workflows/pytest.yml/badge.svg)](https://github.com/basnijholt/zfs-unlock/actions/workflows/pytest.yml)
 [![License](https://img.shields.io/github/license/basnijholt/zfs-unlock)](LICENSE)
 
 <img src="docs/logo.svg" alt="ZFS Unlock Logo" align="right" width="120" />
 
-Unlock encrypted OpenZFS datasets over SSH,
-through a restricted receiver on the ZFS host,
-with passphrases kept on a separate trusted machine.
+Unlock encrypted OpenZFS datasets over SSH, through a restricted receiver on the ZFS host, with passphrases kept on a separate trusted machine.
 
 ## Why?
 
-This is the NixOS/OpenZFS counterpart to
-[`truenas-unlock`](https://github.com/basnijholt/truenas-unlock).
+This is the OpenZFS counterpart to [`truenas-unlock`](https://github.com/basnijholt/truenas-unlock).
+I built it after happily using `truenas-unlock`, then [switching my storage host from TrueNAS to NixOS](https://www.nijho.lt/post/truenas-to-nixos/).
+It includes optional NixOS modules for declarative setup, but Nix is not required to use the Python CLI or restricted SSH receiver.
 
 ZFS native encryption is useful, but:
 
@@ -56,6 +56,10 @@ Think of it as a hardware security key for your storage—hidden somewhere in yo
 
 ## Install
 
+Nix is optional.
+`zfs-unlock` is a Python package; install it with `uv` or `pip` on the unlock device, and on the ZFS host if you configure the receiver manually.
+The NixOS modules below are convenience wrappers for creating the receiver account, forced command, sudo rule, allowlist, and client service.
+
 ```bash
 # With uv (recommended)
 uv tool install zfs-unlock
@@ -72,8 +76,7 @@ Generate a dedicated SSH key on the off-box unlock device:
 zfs-unlock keygen --identity-file ~/.ssh/zfs-unlock-receiver --comment pi4-zfs-unlock
 ```
 
-Add the printed public key to the receiver host's `authorizedKeys` list below, then
-create `~/.config/zfs-unlock/config.yaml` on the off-box unlock device:
+Add the printed public key to the receiver host's `authorizedKeys` list below, then create `~/.config/zfs-unlock/config.yaml` on the off-box unlock device:
 
 ```yaml
 host: zfs-host.example.lan
@@ -93,9 +96,9 @@ The `secrets` mode controls how values are interpreted:
 - **files**: always treat values as file paths
 - **inline**: always treat values as literal secrets
 
-On the ZFS host, enable the forced-command receiver. With flakes, add
-`zfs-unlock` as an input and include its NixOS module in the receiver host's
-module list:
+On the ZFS host, enable the forced-command receiver.
+The receiver is just `zfs-unlock receiver --allow-file ... --zfs-path ...` behind a restricted SSH forced command.
+With NixOS flakes, the optional module can generate that setup:
 
 ```nix
 {
@@ -131,9 +134,8 @@ Then configure only the receiver policy on the ZFS host:
 }
 ```
 
-The module creates the `zfs-unlock` SSH user, forced command, sudo rule,
-receiver wrapper, login shell, and `/etc/zfs-unlock/allowed-datasets`. The
-receiver still checks each requested dataset against that allowlist.
+The module creates the `zfs-unlock` SSH user, forced command, sudo rule, receiver wrapper, login shell, and `/etc/zfs-unlock/allowed-datasets`.
+The receiver still checks each requested dataset against that allowlist.
 
 On a NixOS unlock device, include the client module and enable the daemon:
 
@@ -151,10 +153,7 @@ On a NixOS unlock device, include the client module and enable the daemon:
 }
 ```
 
-The client module creates a `zfs-unlock.service` system service, runs the
-packaged `zfs-unlock` executable, installs that CLI into the system profile,
-adds OpenSSH to the service `PATH`, and sets `HOME`/`XDG_CONFIG_HOME` so the
-normal user config is found.
+The client module creates a `zfs-unlock.service` system service, runs the packaged `zfs-unlock` executable, installs that CLI into the system profile, adds OpenSSH to the service `PATH`, and sets `HOME`/`XDG_CONFIG_HOME` so the normal user config is found.
 
 After rebuilding the receiver host, verify the client and receiver path:
 
@@ -162,8 +161,7 @@ After rebuilding the receiver host, verify the client and receiver path:
 zfs-unlock doctor
 ```
 
-`doctor` also checks that the configured SSH identity file and file-backed
-dataset secrets are private to the local user.
+`doctor` also checks that the configured SSH identity file and file-backed dataset secrets are private to the local user.
 
 ## Usage
 
@@ -194,13 +192,11 @@ zfs-unlock lock -D tank/photos
 zfs-unlock lock --force -D tank/photos
 ```
 
-`zfs-unlock lock` can fail with `Key unload error: '<dataset>' is busy` when a
-service still has files open on that dataset. Stop the service first, or use
-`--force` when you intentionally want to unmount the dataset and disrupt those
-processes.
+`zfs-unlock lock` can fail with `Key unload error: '<dataset>' is busy` when a service still has files open on that dataset.
+Stop the service first, or use `--force` when you intentionally want to unmount the dataset and disrupt those processes.
 
-Bare `zfs-unlock` shows help and does not unlock anything. Use the explicit
-`unlock` subcommand for state-changing unlock operations.
+Bare `zfs-unlock` shows help and does not unlock anything.
+Use the explicit `unlock` subcommand for state-changing unlock operations.
 
 ## CLI
 
@@ -252,9 +248,8 @@ zfs-unlock --help
 
 ## Running as a Service
 
-On NixOS, prefer the `services.zfsUnlock.client` module shown above. The
-portable CLI installer requires [uv](https://docs.astral.sh/uv/) and
-auto-detects Linux (systemd) or macOS (launchd):
+On NixOS, prefer the `services.zfsUnlock.client` module shown above.
+The portable CLI installer requires [uv](https://docs.astral.sh/uv/) and auto-detects Linux (systemd) or macOS (launchd):
 
 ```bash
 # Install and start
