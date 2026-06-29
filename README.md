@@ -168,17 +168,17 @@ dataset secrets are private to the local user.
 
 ```bash
 # Run once
-zfs-unlock
+zfs-unlock unlock
 
 # Run as daemon
 # (Checks every 1s if NAS is unreachable, otherwise every 30s)
-zfs-unlock --daemon
+zfs-unlock unlock --daemon
 
 # Custom interval (for the "relaxed" state)
-zfs-unlock --daemon --interval 60
+zfs-unlock unlock --daemon --interval 60
 
 # Dry run
-zfs-unlock --dry-run
+zfs-unlock unlock --dry-run
 
 # Check config, key, network, and receiver status
 zfs-unlock doctor
@@ -197,6 +197,9 @@ zfs-unlock lock --force -D tank/photos
 service still has files open on that dataset. Stop the service first, or use
 `--force` when you intentionally want to unmount the dataset and disrupt those
 processes.
+
+Bare `zfs-unlock` shows help and does not unlock anything. Use the explicit
+`unlock` subcommand for state-changing unlock operations.
 
 ## CLI
 
@@ -221,25 +224,25 @@ zfs-unlock --help
 
  Unlock OpenZFS datasets over a restricted SSH receiver
 
-╭─ Options ────────────────────────────────────────────────────────────────────╮
-│ --config    -c      PATH     Config file path                                │
-│ --dry-run   -n               Show what would be done                         │
-│ --daemon    -d               Run continuously                                │
-│ --interval  -i      INTEGER  Seconds between checks (1s if unreachable)      │
-│                              [default: 30]                                   │
-│ --dataset   -D      TEXT     Filter by dataset path                          │
-│ --version   -v               Show version and exit                           │
-│ --help      -h               Show this message and exit.                     │
-╰──────────────────────────────────────────────────────────────────────────────╯
-╭─ Commands ───────────────────────────────────────────────────────────────────╮
-│ keygen    Generate a dedicated SSH key for zfs-unlock.                       │
-│ doctor    Check client config, SSH key, host reachability, and receiver      │
-│           status.                                                            │
-│ lock      Lock configured datasets.                                          │
-│ status    Show lock status of configured datasets.                           │
-│ receiver  Run the restricted NAS-side receiver.                              │
-│ service   Manage system service                                              │
-╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ Options ──────────────────────────────────────────────────────────────────────────────╮
+│ --version  -v        Show version and exit                                             │
+│ --help     -h        Show this message and exit.                                       │
+╰────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Setup Commands ───────────────────────────────────────────────────────────────────────╮
+│ keygen    Generate a dedicated SSH key for zfs-unlock.                                 │
+╰────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Client Commands ──────────────────────────────────────────────────────────────────────╮
+│ doctor    Check client config, SSH key, host reachability, and receiver status.        │
+│ unlock    Unlock configured datasets.                                                  │
+│ lock      Lock configured datasets.                                                    │
+│ status    Show lock status of configured datasets.                                     │
+╰────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Receiver Commands ────────────────────────────────────────────────────────────────────╮
+│ receiver  Run the restricted NAS-side receiver.                                        │
+╰────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Service Commands ─────────────────────────────────────────────────────────────────────╮
+│ service   Manage system service                                                        │
+╰────────────────────────────────────────────────────────────────────────────────────────╯
 
 ```
 

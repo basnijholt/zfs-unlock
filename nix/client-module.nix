@@ -13,6 +13,7 @@ let
   ];
 
   execArgs = [
+    "unlock"
     "--daemon"
     "--interval"
     (toString cfg.interval)

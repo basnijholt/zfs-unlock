@@ -76,10 +76,32 @@ def test_cli_help() -> None:
     assert "Unlock OpenZFS datasets" in result.stdout
 
 
+def test_cli_help_groups_commands() -> None:
+    """Top-level help groups commands by operator workflow."""
+    result = runner.invoke(app, ["--help"])
+
+    assert result.exit_code == 0
+    assert "Client Commands" in result.stdout
+    assert "Setup Commands" in result.stdout
+    assert "Receiver Commands" in result.stdout
+    assert "Service Commands" in result.stdout
+
+
+def test_cli_without_subcommand_shows_help() -> None:
+    """Bare invocation shows help and does not unlock datasets."""
+    with patch("zfs_unlock.run_unlock") as run_unlock:
+        result = runner.invoke(app)
+
+    assert result.exit_code == 0
+    assert "Usage:" in result.stdout
+    assert "unlock" in result.stdout
+    run_unlock.assert_not_called()
+
+
 def test_cli_missing_config() -> None:
     """Test CLI fails without config."""
     with patch("zfs_unlock.find_config", return_value=None):
-        result = runner.invoke(app)
+        result = runner.invoke(app, ["unlock"])
 
     assert result.exit_code == 1
     assert "Config not found" in result.stderr
@@ -96,7 +118,7 @@ def test_cli_with_config(tmp_path: Path) -> None:
         return True
 
     with patch("zfs_unlock.run_unlock", new=fake_run_unlock):
-        result = runner.invoke(app, ["--config", str(config_file)])
+        result = runner.invoke(app, ["unlock", "--config", str(config_file)])
 
     assert result.exit_code == 0
     assert len(calls) == 1
@@ -114,7 +136,7 @@ def test_cli_daemon_mode(tmp_path: Path) -> None:
         patch("time.sleep") as mock_sleep,
     ):
         mock_run.side_effect = [True, False, KeyboardInterrupt]
-        result = runner.invoke(app, ["--config", str(config_file), "--daemon", "--interval", "10"])
+        result = runner.invoke(app, ["unlock", "--config", str(config_file), "--daemon", "--interval", "10"])
 
     assert result.exit_code == 0
     assert mock_run.call_count == DAEMON_RUN_CALLS
