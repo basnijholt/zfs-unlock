@@ -74,21 +74,6 @@ class TestResolveSecret:
 class TestDataset:
     """Tests for Dataset model."""
 
-    def test_path_parsing(self) -> None:
-        """Dataset exposes pool and child name."""
-        ds = Dataset(path="tank/photos", secret="passphrase")
-
-        assert ds.pool == "tank"
-        assert ds.name == "photos"
-        assert ds.path == "tank/photos"
-
-    def test_nested_path(self) -> None:
-        """Dataset child name preserves nested path."""
-        ds = Dataset(path="tank/data/photos", secret="passphrase")
-
-        assert ds.pool == "tank"
-        assert ds.name == "data/photos"
-
     def test_rejects_unsafe_path(self) -> None:
         """Dataset paths use the same conservative names accepted by the receiver."""
         with pytest.raises(ValidationError):

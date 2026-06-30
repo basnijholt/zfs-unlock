@@ -35,6 +35,25 @@ class RecordingRunner:
         return self.results.pop(0)
 
 
+class CancellingRunner:
+    """Async runner that simulates a cancelled SSH status command."""
+
+    def __init__(self) -> None:
+        """Initialize an empty call log."""
+        self.calls: list[tuple[list[str], str | None]] = []
+
+    async def run(
+        self,
+        args: list[str],
+        *,
+        input_text: str | None = None,
+        command_timeout: float | None = None,  # noqa: ARG002
+    ) -> CommandResult:
+        """Record a command and raise cancellation."""
+        self.calls.append((args, input_text))
+        raise asyncio.CancelledError
+
+
 def test_run_unlock_unlocks_only_locked_datasets() -> None:
     """run_unlock unlocks locked datasets and skips available ones."""
     config = Config(
@@ -197,6 +216,19 @@ def test_run_status_returns_false_for_unknown_status() -> None:
         datasets=[Dataset(path="tank/plain", secret="pass1")],
     )
     runner = RecordingRunner(CommandResult(returncode=0, stdout="unknown\n", stderr=""))
+
+    assert asyncio.run(run_status(config, runner=runner)) is False
+
+    assert [call[0][-1] for call in runner.calls] == ["status tank/plain"]
+
+
+def test_run_status_returns_false_when_status_task_is_cancelled() -> None:
+    """run_status treats cancelled status tasks as unknown status."""
+    config = Config(
+        host="zfs-host.example.lan",
+        datasets=[Dataset(path="tank/plain", secret="pass1")],
+    )
+    runner = CancellingRunner()
 
     assert asyncio.run(run_status(config, runner=runner)) is False
 

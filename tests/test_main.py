@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 from zfs_unlock.config import is_safe_dataset_name
 from zfs_unlock.process import CommandResult
-from zfs_unlock.receiver import Receiver, parse_receiver_command
+from zfs_unlock.receiver import Receiver, ReceiverRequest, parse_receiver_command
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -33,6 +33,18 @@ def write_allowlist(tmp_path: Path, *datasets: str) -> Path:
     allow_file = tmp_path / "allowed-datasets"
     allow_file.write_text("\n".join(datasets) + "\n")
     return allow_file
+
+
+def parse_request(receiver: Receiver, *args: str) -> ReceiverRequest:
+    """Parse raw receiver args and assert they are accepted."""
+    request = receiver.parse(list(args))
+    assert isinstance(request, ReceiverRequest), request.stderr
+    return request
+
+
+def handle_request(receiver: Receiver, *args: str, stdin_text: str = "") -> CommandResult:
+    """Parse and handle a receiver request."""
+    return receiver.handle(parse_request(receiver, *args), stdin_text=stdin_text)
 
 
 def test_is_safe_dataset_name_accepts_zfs_dataset_paths() -> None:
@@ -63,8 +75,9 @@ def test_receiver_rejects_dataset_not_in_allowlist(tmp_path: Path) -> None:
     runner = RecordingLocalRunner()
     receiver = Receiver(allow_file=allow_file, runner=runner)
 
-    response = receiver.handle(["status", "tank/media"], stdin_text="")
+    response = receiver.parse(["status", "tank/media"])
 
+    assert isinstance(response, CommandResult)
     assert response.returncode == 1
     assert "not allowed" in response.stderr
     assert runner.calls == []
@@ -76,7 +89,7 @@ def test_receiver_status_maps_keystatus(tmp_path: Path) -> None:
     runner = RecordingLocalRunner(CommandResult(returncode=0, stdout="unavailable\n", stderr=""))
     receiver = Receiver(allow_file=allow_file, runner=runner)
 
-    response = receiver.handle(["status", "tank/photos"], stdin_text="")
+    response = handle_request(receiver, "status", "tank/photos")
 
     assert response.returncode == 0
     assert response.stdout == "locked\n"
@@ -95,7 +108,7 @@ def test_receiver_unlock_loads_key_from_stdin_and_mounts(tmp_path: Path) -> None
     )
     receiver = Receiver(allow_file=allow_file, runner=runner)
 
-    response = receiver.handle(["unlock", "tank/photos"], stdin_text="secret-pass\n")
+    response = handle_request(receiver, "unlock", "tank/photos", stdin_text="secret-pass\n")
 
     assert response.returncode == 0
     assert response.stdout == "unlocked tank/photos\n"
@@ -116,7 +129,7 @@ def test_receiver_unlock_fails_when_mount_fails(tmp_path: Path) -> None:
     )
     receiver = Receiver(allow_file=allow_file, runner=runner)
 
-    response = receiver.handle(["unlock", "tank/photos"], stdin_text="secret-pass\n")
+    response = handle_request(receiver, "unlock", "tank/photos", stdin_text="secret-pass\n")
 
     assert response.returncode == 1
     assert response.stderr == "mount failed\n"
@@ -133,7 +146,7 @@ def test_receiver_unlock_skips_already_available_key(tmp_path: Path) -> None:
     runner = RecordingLocalRunner(CommandResult(returncode=0, stdout="available\n", stderr=""))
     receiver = Receiver(allow_file=allow_file, runner=runner)
 
-    response = receiver.handle(["unlock", "tank/photos"], stdin_text="secret-pass\n")
+    response = handle_request(receiver, "unlock", "tank/photos", stdin_text="secret-pass\n")
 
     assert response.returncode == 0
     assert response.stdout == "already unlocked tank/photos\n"
@@ -157,7 +170,7 @@ def test_receiver_lock_force_unmounts_descendants_then_unloads_key(tmp_path: Pat
     )
     receiver = Receiver(allow_file=allow_file, runner=runner)
 
-    response = receiver.handle(["lock", "tank/photos", "--force"], stdin_text="")
+    response = handle_request(receiver, "lock", "tank/photos", "--force")
 
     assert response.returncode == 0
     assert response.stdout == "locked tank/photos\n"
@@ -175,7 +188,7 @@ def test_receiver_lock_force_stops_when_descendant_listing_fails(tmp_path: Path)
     runner = RecordingLocalRunner(CommandResult(returncode=1, stdout="", stderr="list failed\n"))
     receiver = Receiver(allow_file=allow_file, runner=runner)
 
-    response = receiver.handle(["lock", "tank/photos", "--force"], stdin_text="")
+    response = handle_request(receiver, "lock", "tank/photos", "--force")
 
     assert response.returncode == 1
     assert response.stderr == "list failed\n"
@@ -192,7 +205,7 @@ def test_receiver_lock_force_rejects_unrelated_mounted_dataset(tmp_path: Path) -
     )
     receiver = Receiver(allow_file=allow_file, runner=runner)
 
-    response = receiver.handle(["lock", "tank/photos", "--force"], stdin_text="")
+    response = handle_request(receiver, "lock", "tank/photos", "--force")
 
     assert response.returncode == 1
     assert "outside target subtree" in response.stderr

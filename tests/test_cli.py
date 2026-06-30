@@ -291,19 +291,20 @@ def test_cli_receiver_uses_ssh_original_command(tmp_path: Path) -> None:
     allow_file = tmp_path / "allowed"
     allow_file.write_text("tank/photos\n")
     response = MagicMock(returncode=0, stdout="locked\n", stderr="")
+    request = SimpleNamespace(requires_stdin=False)
 
     with (
         patch.dict("os.environ", {"SSH_ORIGINAL_COMMAND": "status tank/photos"}),
         patch("zfs_unlock.cli.Receiver") as receiver_cls,
     ):
-        receiver_cls.return_value.preflight.return_value = None
-        receiver_cls.return_value.requires_stdin.return_value = False
+        receiver_cls.return_value.parse.return_value = request
         receiver_cls.return_value.handle.return_value = response
         result = runner.invoke(app, ["receiver", "--allow-file", str(allow_file)])
 
     assert result.exit_code == 0
     assert result.stdout == "locked\n"
-    receiver_cls.return_value.handle.assert_called_once_with(["status", "tank/photos"], stdin_text="")
+    receiver_cls.return_value.parse.assert_called_once_with(["status", "tank/photos"])
+    receiver_cls.return_value.handle.assert_called_once_with(request, stdin_text="")
 
 
 def test_cli_receiver_parses_single_wrapped_command_argument(tmp_path: Path) -> None:
@@ -311,16 +312,17 @@ def test_cli_receiver_parses_single_wrapped_command_argument(tmp_path: Path) -> 
     allow_file = tmp_path / "allowed"
     allow_file.write_text("tank/photos\n")
     response = MagicMock(returncode=0, stdout="locked\n", stderr="")
+    request = SimpleNamespace(requires_stdin=False)
 
     with patch("zfs_unlock.cli.Receiver") as receiver_cls:
-        receiver_cls.return_value.preflight.return_value = None
-        receiver_cls.return_value.requires_stdin.return_value = False
+        receiver_cls.return_value.parse.return_value = request
         receiver_cls.return_value.handle.return_value = response
         result = runner.invoke(app, ["receiver", "--allow-file", str(allow_file), "status tank/photos"])
 
     assert result.exit_code == 0
     assert result.stdout == "locked\n"
-    receiver_cls.return_value.handle.assert_called_once_with(["status", "tank/photos"], stdin_text="")
+    receiver_cls.return_value.parse.assert_called_once_with(["status", "tank/photos"])
+    receiver_cls.return_value.handle.assert_called_once_with(request, stdin_text="")
 
 
 def test_cli_receiver_reports_malformed_wrapped_command(tmp_path: Path) -> None:
@@ -339,19 +341,20 @@ def test_cli_receiver_status_does_not_read_stdin(tmp_path: Path) -> None:
     allow_file = tmp_path / "allowed"
     allow_file.write_text("tank/photos\n")
     response = MagicMock(returncode=0, stdout="locked\n", stderr="")
+    request = SimpleNamespace(requires_stdin=False)
 
     with (
         patch("zfs_unlock.cli.sys.stdin.read", side_effect=AssertionError("stdin should not be read")),
         patch("zfs_unlock.cli.Receiver") as receiver_cls,
     ):
-        receiver_cls.return_value.preflight.return_value = None
-        receiver_cls.return_value.requires_stdin.return_value = False
+        receiver_cls.return_value.parse.return_value = request
         receiver_cls.return_value.handle.return_value = response
         with pytest.raises(typer.Exit) as exc_info:
             receiver(SimpleNamespace(args=["status tank/photos"]), allow_file=allow_file)
 
     assert exc_info.value.exit_code == 0
-    receiver_cls.return_value.handle.assert_called_once_with(["status", "tank/photos"], stdin_text="")
+    receiver_cls.return_value.parse.assert_called_once_with(["status", "tank/photos"])
+    receiver_cls.return_value.handle.assert_called_once_with(request, stdin_text="")
 
 
 def test_cli_receiver_unlock_reads_stdin(tmp_path: Path) -> None:
@@ -359,20 +362,21 @@ def test_cli_receiver_unlock_reads_stdin(tmp_path: Path) -> None:
     allow_file = tmp_path / "allowed"
     allow_file.write_text("tank/photos\n")
     response = MagicMock(returncode=0, stdout="unlocked\n", stderr="")
+    request = SimpleNamespace(requires_stdin=True)
 
     with (
         patch("zfs_unlock.cli.sys.stdin.read", return_value="secret\n") as stdin_read,
         patch("zfs_unlock.cli.Receiver") as receiver_cls,
     ):
-        receiver_cls.return_value.preflight.return_value = None
-        receiver_cls.return_value.requires_stdin.return_value = True
+        receiver_cls.return_value.parse.return_value = request
         receiver_cls.return_value.handle.return_value = response
         with pytest.raises(typer.Exit) as exc_info:
             receiver(SimpleNamespace(args=["unlock tank/photos"]), allow_file=allow_file)
 
     assert exc_info.value.exit_code == 0
     stdin_read.assert_called_once_with()
-    receiver_cls.return_value.handle.assert_called_once_with(["unlock", "tank/photos"], stdin_text="secret\n")
+    receiver_cls.return_value.parse.assert_called_once_with(["unlock", "tank/photos"])
+    receiver_cls.return_value.handle.assert_called_once_with(request, stdin_text="secret\n")
 
 
 def test_cli_receiver_disallowed_unlock_does_not_read_stdin(
@@ -398,10 +402,10 @@ def test_cli_receiver_passes_zfs_path(tmp_path: Path) -> None:
     allow_file = tmp_path / "allowed"
     allow_file.write_text("tank/photos\n")
     response = MagicMock(returncode=0, stdout="locked\n", stderr="")
+    request = SimpleNamespace(requires_stdin=False)
 
     with patch("zfs_unlock.cli.Receiver") as receiver_cls:
-        receiver_cls.return_value.preflight.return_value = None
-        receiver_cls.return_value.requires_stdin.return_value = False
+        receiver_cls.return_value.parse.return_value = request
         receiver_cls.return_value.handle.return_value = response
         result = runner.invoke(
             app,
@@ -417,7 +421,8 @@ def test_cli_receiver_passes_zfs_path(tmp_path: Path) -> None:
 
     assert result.exit_code == 0
     receiver_cls.assert_called_once_with(allow_file=allow_file, zfs_path="/run/current-system/sw/bin/zfs")
-    receiver_cls.return_value.handle.assert_called_once_with(["status", "tank/photos"], stdin_text="")
+    receiver_cls.return_value.parse.assert_called_once_with(["status", "tank/photos"])
+    receiver_cls.return_value.handle.assert_called_once_with(request, stdin_text="")
 
 
 def test_doctor_reports_missing_identity_file(tmp_path: Path) -> None:

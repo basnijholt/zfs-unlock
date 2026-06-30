@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import shlex
+from dataclasses import dataclass
+from enum import StrEnum
+from functools import cached_property
 from typing import TYPE_CHECKING
 
 from .config import is_safe_dataset_name
-from .constants import RECEIVER_UNLOCK_ARG_COUNT
 from .process import CommandResult, LocalCommandRunner, LocalSubprocessRunner
 
 if TYPE_CHECKING:
@@ -16,6 +18,34 @@ if TYPE_CHECKING:
 def parse_receiver_command(command: str) -> list[str]:
     """Parse an SSH_ORIGINAL_COMMAND string into receiver arguments."""
     return shlex.split(command)
+
+
+DATASET_COMMAND_ARG_COUNT = 2
+LOCK_COMMAND_ARG_COUNTS = {2, 3}
+LOCK_FORCE_ARG_COUNT = 3
+FORCE_LOCK_OPTION = "--force"
+
+
+class ReceiverAction(StrEnum):
+    """Receiver actions accepted over the forced SSH command."""
+
+    STATUS = "status"
+    UNLOCK = "unlock"
+    LOCK = "lock"
+
+
+@dataclass(frozen=True)
+class ReceiverRequest:
+    """Validated receiver request."""
+
+    action: ReceiverAction
+    dataset: str
+    force: bool = False
+
+    @property
+    def requires_stdin(self) -> bool:
+        """Return whether the request needs stdin from the SSH client."""
+        return self.action == ReceiverAction.UNLOCK
 
 
 class Receiver:
@@ -33,63 +63,74 @@ class Receiver:
         self.runner = runner or LocalSubprocessRunner()
         self.zfs_path = zfs_path
 
-    def handle(self, args: list[str], *, stdin_text: str) -> CommandResult:
-        """Handle a restricted receiver command."""
+    def parse(self, args: list[str]) -> ReceiverRequest | CommandResult:
+        """Validate raw receiver arguments before reading stdin."""
         if not args:
             return self._error("missing command")
 
-        command = args[0]
-        if command == "status" and len(args) == 2:  # noqa: PLR2004
-            return self._status(args[1])
-        if command == "unlock" and len(args) == 2:  # noqa: PLR2004
-            return self._unlock(args[1], stdin_text=stdin_text)
-        if command == "lock" and len(args) in {2, 3}:
-            force = len(args) == 3 and args[2] == "--force"  # noqa: PLR2004
-            if len(args) == 3 and not force:  # noqa: PLR2004
-                return self._error("unsupported lock option")
-            return self._lock(args[1], force=force)
+        try:
+            action = ReceiverAction(args[0])
+        except ValueError:
+            return self._error("unsupported command")
+
+        if action in {ReceiverAction.STATUS, ReceiverAction.UNLOCK}:
+            return self._parse_dataset_request(action, args)
+        if action == ReceiverAction.LOCK:
+            return self._parse_lock_request(args)
         return self._error("unsupported command")
 
-    def preflight(self, args: list[str]) -> CommandResult | None:
-        """Validate receiver command metadata before reading stdin."""
-        if not args:
-            return self._error("missing command")
+    def _parse_dataset_request(self, action: ReceiverAction, args: list[str]) -> ReceiverRequest | CommandResult:
+        if len(args) != DATASET_COMMAND_ARG_COUNT:
+            return self._error("unsupported command")
+        return self._validated_request(action, args[1])
 
-        command = args[0]
-        if command in {"status", "unlock"} and len(args) == 2:  # noqa: PLR2004
-            return self._preflight_dataset(args[1])
-        if command == "lock" and len(args) in {2, 3}:
-            if len(args) == 3 and args[2] != "--force":  # noqa: PLR2004
-                return self._error("unsupported lock option")
-            return self._preflight_dataset(args[1])
-        return None
+    def _parse_lock_request(self, args: list[str]) -> ReceiverRequest | CommandResult:
+        if len(args) not in LOCK_COMMAND_ARG_COUNTS:
+            return self._error("unsupported command")
 
-    @staticmethod
-    def requires_stdin(args: list[str]) -> bool:
-        """Return whether a validated receiver command needs stdin."""
-        return len(args) == RECEIVER_UNLOCK_ARG_COUNT and args[0] == "unlock"
+        force = len(args) == LOCK_FORCE_ARG_COUNT
+        if force and args[2] != FORCE_LOCK_OPTION:
+            return self._error("unsupported lock option")
+        return self._validated_request(ReceiverAction.LOCK, args[1], force=force)
 
-    def _allowed_datasets(self) -> set[str]:
+    def _validated_request(
+        self,
+        action: ReceiverAction,
+        dataset: str,
+        *,
+        force: bool = False,
+    ) -> ReceiverRequest | CommandResult:
+        if error := self._validate_dataset(dataset):
+            return self._error(error)
+        return ReceiverRequest(action=action, dataset=dataset, force=force)
+
+    def handle(self, request: ReceiverRequest, *, stdin_text: str) -> CommandResult:
+        """Handle a restricted receiver command."""
+        if request.action == ReceiverAction.STATUS:
+            return self._status(request.dataset)
+        if request.action == ReceiverAction.UNLOCK:
+            return self._unlock(request.dataset, stdin_text=stdin_text)
+        if request.action == ReceiverAction.LOCK:
+            return self._lock(request.dataset, force=request.force)
+        return self._error("unsupported command")
+
+    @cached_property
+    def _allowed_datasets(self) -> frozenset[str]:
         if not self.allow_file.exists():
-            return set()
+            return frozenset()
 
         datasets: set[str] = set()
         for line in self.allow_file.read_text().splitlines():
             stripped = line.strip()
             if stripped and not stripped.startswith("#"):
                 datasets.add(stripped)
-        return datasets
+        return frozenset(datasets)
 
     def _validate_dataset(self, dataset: str) -> str | None:
         if not is_safe_dataset_name(dataset):
             return f"unsafe dataset name: {dataset}"
-        if dataset not in self._allowed_datasets():
+        if dataset not in self._allowed_datasets:
             return f"dataset not allowed: {dataset}"
-        return None
-
-    def _preflight_dataset(self, dataset: str) -> CommandResult | None:
-        if error := self._validate_dataset(dataset):
-            return self._error(error)
         return None
 
     def _keystatus(self, dataset: str) -> CommandResult:

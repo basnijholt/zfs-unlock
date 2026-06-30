@@ -16,6 +16,7 @@ from .config import load_config
 from .diagnostics import doctor
 from .keygen import keygen
 from .output import console
+from .process import CommandResult
 from .receiver import Receiver, parse_receiver_command
 from .service import service_app
 from .version import __version__
@@ -128,15 +129,13 @@ def receiver(
         raise typer.Exit(1) from exc
 
     receiver_instance = Receiver(allow_file=allow_file, zfs_path=zfs_path)
-    if response := receiver_instance.preflight(args):
-        if response.stdout:
-            sys.stdout.write(response.stdout)
-        if response.stderr:
-            sys.stderr.write(response.stderr)
-        raise typer.Exit(response.returncode)
+    request = receiver_instance.parse(args)
+    if isinstance(request, CommandResult):
+        response = request
+    else:
+        stdin_text = sys.stdin.read() if request.requires_stdin else ""
+        response = receiver_instance.handle(request, stdin_text=stdin_text)
 
-    stdin_text = sys.stdin.read() if receiver_instance.requires_stdin(args) else ""
-    response = receiver_instance.handle(args, stdin_text=stdin_text)
     if response.stdout:
         sys.stdout.write(response.stdout)
     if response.stderr:

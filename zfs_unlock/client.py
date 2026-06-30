@@ -89,23 +89,33 @@ class ZfsUnlockClient:
         console.print(f"[yellow]LOCK[/yellow] Locked {dataset.path}")
         return True
 
-    async def check_and_unlock(self, dataset: Dataset, *, quiet: bool = False) -> bool:
-        """Unlock a dataset only if it is currently locked."""
-        locked = await self.is_locked(dataset, quiet=quiet)
-        if locked is None:
-            msg = "Failed to check lock status"
-            raise ConnectionError(msg)
-        if locked:
-            console.print(f"[yellow]![/yellow] {dataset.path} locked, unlocking...")
-            return await self.unlock(dataset)
-        return False
-
 
 def filter_datasets(datasets: list[Dataset], filters: list[str] | None) -> list[Dataset]:
     """Filter datasets by path patterns."""
     if not filters:
         return datasets
     return [ds for ds in datasets if any(f in ds.path for f in filters)]
+
+
+def _select_datasets(config: Config, filters: list[str] | None) -> list[Dataset] | None:
+    datasets = filter_datasets(config.datasets, filters)
+    if not datasets:
+        err_console.print("[yellow]No matching datasets found.[/yellow]")
+        return None
+    return datasets
+
+
+async def _lock_statuses(
+    client: ZfsUnlockClient,
+    datasets: list[Dataset],
+    *,
+    quiet: bool,
+) -> list[bool | None]:
+    statuses = await asyncio.gather(
+        *[client.is_locked(dataset, quiet=quiet) for dataset in datasets],
+        return_exceptions=True,
+    )
+    return [None if isinstance(status, BaseException) else status for status in statuses]
 
 
 async def run_unlock(
@@ -117,9 +127,8 @@ async def run_unlock(
     runner: CommandRunner | None = None,
 ) -> bool:
     """Run one unlock pass. Returns False when any dataset check or unlock fails."""
-    datasets = filter_datasets(config.datasets, dataset_filters)
-    if not datasets:
-        err_console.print("[yellow]No matching datasets found.[/yellow]")
+    datasets = _select_datasets(config, dataset_filters)
+    if datasets is None:
         return False
 
     if dry_run:
@@ -129,14 +138,9 @@ async def run_unlock(
         return True
 
     client = ZfsUnlockClient(config, runner=runner)
-    statuses = await asyncio.gather(
-        *[client.is_locked(dataset, quiet=quiet) for dataset in datasets],
-        return_exceptions=True,
-    )
-
-    for status in statuses:
-        if isinstance(status, Exception) or status is None:
-            return False
+    statuses = await _lock_statuses(client, datasets, quiet=quiet)
+    if any(status is None for status in statuses):
+        return False
 
     for dataset, locked in zip(datasets, statuses, strict=True):
         if locked is True and not await client.unlock(dataset):
@@ -152,19 +156,15 @@ async def run_lock(
     runner: CommandRunner | None = None,
 ) -> bool:
     """Lock all configured datasets that are currently unlocked."""
-    datasets = filter_datasets(config.datasets, dataset_filters)
-    if not datasets:
-        err_console.print("[yellow]No matching datasets found.[/yellow]")
+    datasets = _select_datasets(config, dataset_filters)
+    if datasets is None:
         return False
 
     client = ZfsUnlockClient(config, runner=runner)
-    statuses = await asyncio.gather(
-        *[client.is_locked(dataset, quiet=True) for dataset in datasets],
-        return_exceptions=True,
-    )
+    statuses = await _lock_statuses(client, datasets, quiet=True)
     success = True
     for dataset, locked in zip(datasets, statuses, strict=True):
-        if isinstance(locked, Exception) or locked is None:
+        if locked is None:
             success = False
         elif locked is False:
             success = await client.lock(dataset, force=force) and success
@@ -180,19 +180,15 @@ async def run_status(
     runner: CommandRunner | None = None,
 ) -> bool:
     """Show lock status of all configured datasets."""
-    datasets = filter_datasets(config.datasets, dataset_filters)
-    if not datasets:
-        err_console.print("[yellow]No matching datasets found.[/yellow]")
+    datasets = _select_datasets(config, dataset_filters)
+    if datasets is None:
         return False
 
     client = ZfsUnlockClient(config, runner=runner)
-    statuses = await asyncio.gather(
-        *[client.is_locked(dataset, quiet=True) for dataset in datasets],
-        return_exceptions=True,
-    )
+    statuses = await _lock_statuses(client, datasets, quiet=True)
     success = True
     for dataset, locked in zip(datasets, statuses, strict=True):
-        if isinstance(locked, Exception) or locked is None:
+        if locked is None:
             console.print(f"[red]?[/red] {dataset.path} [dim]unknown[/dim]")
             success = False
         elif locked is True:
