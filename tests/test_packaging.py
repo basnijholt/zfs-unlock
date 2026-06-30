@@ -40,7 +40,10 @@ def test_built_wheel_reports_distribution_version(tmp_path: Path) -> None:
             "-c",
             (
                 "import importlib.metadata;"
+                "import sys;"
                 "import zfs_unlock;"
+                "assert zfs_unlock.__all__ == ['__version__'], zfs_unlock.__all__;"
+                "assert 'zfs_unlock.cli' not in sys.modules, sorted(sys.modules);"
                 "assert zfs_unlock.__version__ == importlib.metadata.version('zfs-unlock'), "
                 "(zfs_unlock.__version__, importlib.metadata.version('zfs-unlock'))"
             ),

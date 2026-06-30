@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from zfs_unlock import CommandResult, Receiver, is_safe_dataset_name, parse_receiver_command
+from zfs_unlock.config import is_safe_dataset_name
+from zfs_unlock.process import CommandResult
+from zfs_unlock.receiver import Receiver, parse_receiver_command
 
 if TYPE_CHECKING:
     from pathlib import Path

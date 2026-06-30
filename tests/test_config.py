@@ -6,7 +6,8 @@ from textwrap import dedent
 import pytest
 from pydantic import ValidationError
 
-from zfs_unlock import DEFAULT_IDENTITY_FILE, EXAMPLE_CONFIG, Config, Dataset, SecretsMode, resolve_secret
+from zfs_unlock.config import Config, Dataset, SecretsMode, resolve_secret
+from zfs_unlock.constants import DEFAULT_IDENTITY_FILE, EXAMPLE_CONFIG
 
 DEFAULT_PORT = 22
 DEFAULT_CONNECT_TIMEOUT = 5

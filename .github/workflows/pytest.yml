@@ -26,7 +26,7 @@ jobs:
       - name: Format check
         run: uv run ruff format --check .
       - name: Type check
-        run: uv run mypy zfs_unlock.py
+        run: uv run mypy zfs_unlock
       - name: Test
         run: uv run pytest --cov=zfs_unlock --cov-report=term-missing
 

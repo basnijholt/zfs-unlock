@@ -11,7 +11,9 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
-from zfs_unlock import Dataset, app, filter_datasets, find_config, receiver
+from zfs_unlock.cli import app, receiver
+from zfs_unlock.client import filter_datasets
+from zfs_unlock.config import Dataset, find_config
 
 runner = CliRunner()
 DAEMON_RUN_CALLS = 3
@@ -60,14 +62,14 @@ class TestFindConfig:
         monkeypatch.chdir(tmp_path)
         (tmp_path / "config.yaml").write_text("host: test")
 
-        with patch("zfs_unlock.CONFIG_SEARCH_PATHS", [Path("config.yaml"), Path("config.yml")]):
+        with patch("zfs_unlock.config.CONFIG_SEARCH_PATHS", [Path("config.yaml"), Path("config.yml")]):
             assert find_config() == Path("config.yaml")
 
     def test_returns_none_when_no_config(self, tmp_path: Path, monkeypatch: object) -> None:
         """Return None when no config file exists."""
         monkeypatch.chdir(tmp_path)
 
-        with patch("zfs_unlock.CONFIG_SEARCH_PATHS", [Path("config.yaml"), Path("config.yml")]):
+        with patch("zfs_unlock.config.CONFIG_SEARCH_PATHS", [Path("config.yaml"), Path("config.yml")]):
             assert find_config() is None
 
 
@@ -107,7 +109,7 @@ def test_cli_help_groups_commands() -> None:
 
 def test_cli_without_subcommand_shows_help() -> None:
     """Bare invocation shows help and does not unlock datasets."""
-    with patch("zfs_unlock.run_unlock") as run_unlock:
+    with patch("zfs_unlock.cli.run_unlock") as run_unlock:
         result = runner.invoke(app)
 
     assert result.exit_code == 0
@@ -118,7 +120,7 @@ def test_cli_without_subcommand_shows_help() -> None:
 
 def test_cli_missing_config() -> None:
     """Test CLI fails without config."""
-    with patch("zfs_unlock.find_config", return_value=None):
+    with patch("zfs_unlock.config.find_config", return_value=None):
         result = runner.invoke(app, ["unlock"])
 
     assert result.exit_code == 1
@@ -157,7 +159,7 @@ def test_cli_with_config(tmp_path: Path) -> None:
         calls.append((args, kwargs))
         return True
 
-    with patch("zfs_unlock.run_unlock", new=fake_run_unlock):
+    with patch("zfs_unlock.cli.run_unlock", new=fake_run_unlock):
         result = runner.invoke(app, ["unlock", "--config", str(config_file)])
 
     assert result.exit_code == 0
@@ -172,7 +174,7 @@ def test_cli_unlock_exits_nonzero_when_run_fails(tmp_path: Path) -> None:
     async def fake_run_unlock(*_args: object, **_kwargs: object) -> bool:
         return False
 
-    with patch("zfs_unlock.run_unlock", new=fake_run_unlock):
+    with patch("zfs_unlock.cli.run_unlock", new=fake_run_unlock):
         result = runner.invoke(app, ["unlock", "--config", str(config_file)])
 
     assert result.exit_code == 1
@@ -185,7 +187,7 @@ def test_cli_daemon_mode(tmp_path: Path) -> None:
 
     fake_run_unlock = MagicMock(return_value=object())
     with (
-        patch("zfs_unlock.run_unlock", new=fake_run_unlock),
+        patch("zfs_unlock.cli.run_unlock", new=fake_run_unlock),
         patch("asyncio.run") as mock_run,
         patch("time.sleep") as mock_sleep,
     ):
@@ -211,7 +213,7 @@ def test_cli_daemon_rejects_non_positive_interval(tmp_path: Path, interval: str)
         return True
 
     with (
-        patch("zfs_unlock.run_unlock", new=fake_run_unlock),
+        patch("zfs_unlock.cli.run_unlock", new=fake_run_unlock),
         patch("time.sleep", side_effect=KeyboardInterrupt),
     ):
         result = runner.invoke(app, ["unlock", "--config", str(config_file), "--daemon", "--interval", interval])
@@ -230,7 +232,7 @@ def test_cli_lock_command(tmp_path: Path) -> None:
         calls.append((args, kwargs))
         return True
 
-    with patch("zfs_unlock.run_lock", new=fake_run_lock):
+    with patch("zfs_unlock.cli.run_lock", new=fake_run_lock):
         result = runner.invoke(app, ["lock", "--config", str(config_file), "--force"])
 
     assert result.exit_code == 0
@@ -246,7 +248,7 @@ def test_cli_lock_exits_nonzero_when_run_fails(tmp_path: Path) -> None:
     async def fake_run_lock(*_args: object, **_kwargs: object) -> bool:
         return False
 
-    with patch("zfs_unlock.run_lock", new=fake_run_lock):
+    with patch("zfs_unlock.cli.run_lock", new=fake_run_lock):
         result = runner.invoke(app, ["lock", "--config", str(config_file)])
 
     assert result.exit_code == 1
@@ -262,7 +264,7 @@ def test_cli_status_command(tmp_path: Path) -> None:
         calls.append((args, kwargs))
         return True
 
-    with patch("zfs_unlock.run_status", new=fake_run_status):
+    with patch("zfs_unlock.cli.run_status", new=fake_run_status):
         result = runner.invoke(app, ["status", "--config", str(config_file), "--dataset", "tank/ds"])
 
     assert result.exit_code == 0
@@ -278,7 +280,7 @@ def test_cli_status_exits_nonzero_when_run_fails(tmp_path: Path) -> None:
     async def fake_run_status(*_args: object, **_kwargs: object) -> bool:
         return False
 
-    with patch("zfs_unlock.run_status", new=fake_run_status):
+    with patch("zfs_unlock.cli.run_status", new=fake_run_status):
         result = runner.invoke(app, ["status", "--config", str(config_file)])
 
     assert result.exit_code == 1
@@ -292,7 +294,7 @@ def test_cli_receiver_uses_ssh_original_command(tmp_path: Path) -> None:
 
     with (
         patch.dict("os.environ", {"SSH_ORIGINAL_COMMAND": "status tank/photos"}),
-        patch("zfs_unlock.Receiver") as receiver_cls,
+        patch("zfs_unlock.cli.Receiver") as receiver_cls,
     ):
         receiver_cls.return_value.preflight.return_value = None
         receiver_cls.return_value.requires_stdin.return_value = False
@@ -310,7 +312,7 @@ def test_cli_receiver_parses_single_wrapped_command_argument(tmp_path: Path) -> 
     allow_file.write_text("tank/photos\n")
     response = MagicMock(returncode=0, stdout="locked\n", stderr="")
 
-    with patch("zfs_unlock.Receiver") as receiver_cls:
+    with patch("zfs_unlock.cli.Receiver") as receiver_cls:
         receiver_cls.return_value.preflight.return_value = None
         receiver_cls.return_value.requires_stdin.return_value = False
         receiver_cls.return_value.handle.return_value = response
@@ -339,8 +341,8 @@ def test_cli_receiver_status_does_not_read_stdin(tmp_path: Path) -> None:
     response = MagicMock(returncode=0, stdout="locked\n", stderr="")
 
     with (
-        patch("zfs_unlock.sys.stdin.read", side_effect=AssertionError("stdin should not be read")),
-        patch("zfs_unlock.Receiver") as receiver_cls,
+        patch("zfs_unlock.cli.sys.stdin.read", side_effect=AssertionError("stdin should not be read")),
+        patch("zfs_unlock.cli.Receiver") as receiver_cls,
     ):
         receiver_cls.return_value.preflight.return_value = None
         receiver_cls.return_value.requires_stdin.return_value = False
@@ -359,8 +361,8 @@ def test_cli_receiver_unlock_reads_stdin(tmp_path: Path) -> None:
     response = MagicMock(returncode=0, stdout="unlocked\n", stderr="")
 
     with (
-        patch("zfs_unlock.sys.stdin.read", return_value="secret\n") as stdin_read,
-        patch("zfs_unlock.Receiver") as receiver_cls,
+        patch("zfs_unlock.cli.sys.stdin.read", return_value="secret\n") as stdin_read,
+        patch("zfs_unlock.cli.Receiver") as receiver_cls,
     ):
         receiver_cls.return_value.preflight.return_value = None
         receiver_cls.return_value.requires_stdin.return_value = True
@@ -382,7 +384,7 @@ def test_cli_receiver_disallowed_unlock_does_not_read_stdin(
     allow_file.write_text("tank/photos\n")
 
     with (
-        patch("zfs_unlock.sys.stdin.read", side_effect=AssertionError("stdin should not be read")),
+        patch("zfs_unlock.cli.sys.stdin.read", side_effect=AssertionError("stdin should not be read")),
         pytest.raises(typer.Exit) as exc_info,
     ):
         receiver(SimpleNamespace(args=["unlock tank/media"]), allow_file=allow_file)
@@ -397,7 +399,7 @@ def test_cli_receiver_passes_zfs_path(tmp_path: Path) -> None:
     allow_file.write_text("tank/photos\n")
     response = MagicMock(returncode=0, stdout="locked\n", stderr="")
 
-    with patch("zfs_unlock.Receiver") as receiver_cls:
+    with patch("zfs_unlock.cli.Receiver") as receiver_cls:
         receiver_cls.return_value.preflight.return_value = None
         receiver_cls.return_value.requires_stdin.return_value = False
         receiver_cls.return_value.handle.return_value = response
@@ -440,7 +442,7 @@ def test_doctor_checks_receiver_status(tmp_path: Path) -> None:
     with (
         patch("socket.getaddrinfo", return_value=[object()]),
         patch("socket.create_connection") as create_connection,
-        patch("zfs_unlock.ZfsUnlockClient") as client_cls,
+        patch("zfs_unlock.diagnostics.ZfsUnlockClient") as client_cls,
     ):
         create_connection.return_value.__enter__.return_value = object()
         client_cls.return_value.run_remote = AsyncMock(
@@ -464,7 +466,7 @@ def test_doctor_reports_missing_ssh_executable(tmp_path: Path) -> None:
         patch("shutil.which", return_value=None),
         patch("socket.getaddrinfo", return_value=[object()]),
         patch("socket.create_connection") as create_connection,
-        patch("zfs_unlock.ZfsUnlockClient") as client_cls,
+        patch("zfs_unlock.diagnostics.ZfsUnlockClient") as client_cls,
     ):
         create_connection.return_value.__enter__.return_value = object()
         client_cls.return_value.run_remote = AsyncMock(
@@ -488,7 +490,7 @@ def test_doctor_checks_all_configured_datasets(tmp_path: Path) -> None:
     with (
         patch("socket.getaddrinfo", return_value=[object()]),
         patch("socket.create_connection") as create_connection,
-        patch("zfs_unlock.ZfsUnlockClient") as client_cls,
+        patch("zfs_unlock.diagnostics.ZfsUnlockClient") as client_cls,
     ):
         create_connection.return_value.__enter__.return_value = object()
         client_cls.return_value.run_remote = AsyncMock(
@@ -517,7 +519,7 @@ def test_doctor_fails_unknown_receiver_status(tmp_path: Path) -> None:
     with (
         patch("socket.getaddrinfo", return_value=[object()]),
         patch("socket.create_connection") as create_connection,
-        patch("zfs_unlock.ZfsUnlockClient") as client_cls,
+        patch("zfs_unlock.diagnostics.ZfsUnlockClient") as client_cls,
     ):
         create_connection.return_value.__enter__.return_value = object()
         client_cls.return_value.run_remote = AsyncMock(
@@ -578,7 +580,7 @@ def test_keygen_creates_unlock_key(tmp_path: Path) -> None:
 
     with (
         patch("shutil.which", return_value="/usr/bin/ssh-keygen"),
-        patch("zfs_unlock._run", side_effect=fake_run),
+        patch("zfs_unlock.keygen.run_process", side_effect=fake_run),
     ):
         result = runner.invoke(app, ["keygen", "--identity-file", str(key_path), "--comment", "zfs-unlock"])
 
@@ -590,7 +592,7 @@ def test_keygen_creates_unlock_key(tmp_path: Path) -> None:
 
 def test_service_status_linux() -> None:
     """Service status checks systemd user unit on Linux."""
-    with patch("platform.system", return_value="Linux"), patch("zfs_unlock._run") as mock_run:
+    with patch("platform.system", return_value="Linux"), patch("zfs_unlock.service.run_process") as mock_run:
         mock_run.return_value.stdout = "active\n"
         result = runner.invoke(app, ["service", "status"])
 

@@ -39,7 +39,7 @@ uv run ruff format --check .
 Run type checking:
 
 ```bash
-uv run mypy zfs_unlock.py
+uv run mypy zfs_unlock
 ```
 
 Run Nix checks:
@@ -63,7 +63,12 @@ GitHub Pages deploys that directory from the `Documentation` workflow on `main`.
 ## Project Structure
 
 ```text
-zfs_unlock.py            # CLI, client, receiver, config, doctor, and service commands
+zfs_unlock/              # Python package
+zfs_unlock/cli.py        # Typer command registration and CLI entrypoints
+zfs_unlock/client.py     # SSH client operations and unlock/lock/status workflows
+zfs_unlock/receiver.py   # Restricted receiver and OpenZFS command allowlist enforcement
+zfs_unlock/config.py     # YAML config parsing, dataset validation, and secret resolution
+zfs_unlock/diagnostics.py  # doctor checks
 nix/nixos-module.nix     # NixOS receiver module
 nix/client-module.nix    # NixOS client daemon module
 tests/                   # Python, CLI, integration, packaging, and NixOS module tests

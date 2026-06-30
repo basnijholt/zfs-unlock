@@ -32,7 +32,7 @@ repos:
             language: system
             types: [python]
             pass_filenames: false
-            args: [zfs_unlock.py]
+            args: [zfs_unlock]
           - id: pytest
             name: pytest
             entry: uv run pytest

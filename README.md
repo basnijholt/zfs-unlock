@@ -287,7 +287,7 @@ uv run pytest
 
 # Run lints
 uv run ruff check .
-uv run mypy zfs_unlock.py
+uv run mypy zfs_unlock
 ```
 
 ## Credits
