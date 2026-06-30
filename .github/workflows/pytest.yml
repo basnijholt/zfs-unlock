@@ -43,6 +43,10 @@ jobs:
       - name: Install dependencies
         run: uv sync --dev
       - name: Check flake
-        run: nix flake check
+        run: nix flake check --all-systems --no-write-lock-file
+      - name: Build Nix package
+        run: nix build .#packages.x86_64-linux.default --no-link --no-write-lock-file
+      - name: Build Nix receiver module check
+        run: nix build .#checks.x86_64-linux.receiverModule --no-link --no-write-lock-file
       - name: Test NixOS modules
         run: uv run pytest tests/test_nixos_module.py -q

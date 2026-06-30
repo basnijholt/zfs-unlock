@@ -3,6 +3,21 @@
 let
   cfg = config.services.zfsUnlock.receiver;
 
+  hasLineBreak = value:
+    lib.hasInfix "\n" value || lib.hasInfix "\r" value;
+
+  safeFromPattern = pattern:
+    !hasLineBreak pattern && !lib.hasInfix "\"" pattern;
+
+  safeAuthorizedKey = key:
+    !hasLineBreak key;
+
+  safeDatasetName = dataset:
+    builtins.match "[A-Za-z0-9_.:-]+(/[A-Za-z0-9_.:-]+)*" dataset != null
+    && lib.all
+      (segment: segment != "." && segment != ".." && !lib.hasPrefix "-" segment)
+      (lib.splitString "/" dataset);
+
   fromOption = lib.optionalString (cfg.allowedFrom != [ ])
     ''from="${lib.concatStringsSep "," cfg.allowedFrom}",'';
 
@@ -116,6 +131,18 @@ in
       {
         assertion = cfg.datasets != [ ];
         message = "services.zfsUnlock.receiver.datasets must include at least one dataset.";
+      }
+      {
+        assertion = lib.all safeFromPattern cfg.allowedFrom;
+        message = "services.zfsUnlock.receiver.allowedFrom entries must not contain quotes or newlines.";
+      }
+      {
+        assertion = lib.all safeAuthorizedKey cfg.authorizedKeys;
+        message = "services.zfsUnlock.receiver.authorizedKeys entries must not contain newlines.";
+      }
+      {
+        assertion = lib.all safeDatasetName cfg.datasets;
+        message = "services.zfsUnlock.receiver.datasets entries must be safe OpenZFS dataset names.";
       }
     ];
 

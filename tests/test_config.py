@@ -88,6 +88,11 @@ class TestDataset:
         assert ds.pool == "tank"
         assert ds.name == "data/photos"
 
+    def test_rejects_unsafe_path(self) -> None:
+        """Dataset paths use the same conservative names accepted by the receiver."""
+        with pytest.raises(ValidationError):
+            Dataset(path="tank/photos;reboot", secret="passphrase")
+
     def test_get_passphrase_from_file(self, tmp_path: Path) -> None:
         """Dataset resolves passphrase using configured secret mode."""
         key_file = tmp_path / "key"

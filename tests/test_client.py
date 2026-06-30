@@ -6,7 +6,15 @@ import asyncio
 import sys
 from typing import TYPE_CHECKING
 
-from zfs_unlock import COMMAND_TIMEOUT_RETURNCODE, CommandResult, Config, Dataset, SubprocessRunner, ZfsUnlockClient
+from zfs_unlock import (
+    COMMAND_STARTUP_ERROR_RETURNCODE,
+    COMMAND_TIMEOUT_RETURNCODE,
+    CommandResult,
+    Config,
+    Dataset,
+    SubprocessRunner,
+    ZfsUnlockClient,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -100,6 +108,16 @@ def test_subprocess_runner_returns_timeout_for_hanging_command() -> None:
 
     assert result.returncode == COMMAND_TIMEOUT_RETURNCODE
     assert "timed out after 0.01s" in result.stderr
+
+
+def test_subprocess_runner_returns_error_for_missing_executable() -> None:
+    """SubprocessRunner reports startup errors as command results."""
+    runner = SubprocessRunner()
+
+    result = asyncio.run(runner.run(["/definitely/missing/zfs-unlock-test-binary"]))
+
+    assert result.returncode == COMMAND_STARTUP_ERROR_RETURNCODE
+    assert "missing/zfs-unlock-test-binary" in result.stderr
 
 
 def test_is_locked_maps_receiver_status() -> None:

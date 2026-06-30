@@ -20,7 +20,7 @@ from typing import Annotated, Any, Protocol, cast
 
 import typer
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from rich.console import Console
 
 try:
@@ -36,6 +36,7 @@ err_console = Console(stderr=True)
 
 DATASET_NAME_RE = re.compile(r"^[A-Za-z0-9_.:-]+(?:/[A-Za-z0-9_.:-]+)*$")
 COMMAND_TIMEOUT_RETURNCODE = 124
+COMMAND_STARTUP_ERROR_RETURNCODE = 127
 RECEIVER_UNLOCK_ARG_COUNT = 2
 
 CONFIG_SEARCH_PATHS = [
@@ -136,11 +137,27 @@ def resolve_secret(value: str, mode: SecretsMode) -> str:
     return value
 
 
+def is_safe_dataset_name(name: str) -> bool:
+    """Return whether a string is a conservative ZFS dataset name."""
+    if not DATASET_NAME_RE.fullmatch(name):
+        return False
+    return all(segment not in {".", ".."} and not segment.startswith("-") for segment in name.split("/"))
+
+
 class Dataset(BaseModel):
     """A ZFS dataset to unlock."""
 
     path: str
     secret: str
+
+    @field_validator("path")
+    @classmethod
+    def validate_path(cls, value: str) -> str:
+        """Validate dataset paths before sending them to the receiver."""
+        if not is_safe_dataset_name(value):
+            msg = f"unsafe dataset name: {value}"
+            raise ValueError(msg)
+        return value
 
     @property
     def pool(self) -> str:  # noqa: D102
@@ -226,12 +243,15 @@ class SubprocessRunner:
         command_timeout: float | None = None,
     ) -> CommandResult:
         """Run a command and capture stdout/stderr."""
-        process = await asyncio.create_subprocess_exec(
-            *args,
-            stdin=asyncio.subprocess.PIPE if input_text is not None else None,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *args,
+                stdin=asyncio.subprocess.PIPE if input_text is not None else None,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except OSError as exc:
+            return CommandResult(returncode=COMMAND_STARTUP_ERROR_RETURNCODE, stdout="", stderr=f"{exc}\n")
         try:
             stdout, stderr = await asyncio.wait_for(
                 process.communicate(None if input_text is None else input_text.encode()),
@@ -281,13 +301,6 @@ class LocalSubprocessRunner:
         return CommandResult(returncode=result.returncode, stdout=result.stdout, stderr=result.stderr)
 
 
-def is_safe_dataset_name(name: str) -> bool:
-    """Return whether a string is a conservative ZFS dataset name."""
-    if not DATASET_NAME_RE.fullmatch(name):
-        return False
-    return all(segment not in {".", ".."} and not segment.startswith("-") for segment in name.split("/"))
-
-
 def parse_receiver_command(command: str) -> list[str]:
     """Parse an SSH_ORIGINAL_COMMAND string into receiver arguments."""
     return shlex.split(command)
@@ -325,6 +338,25 @@ class Receiver:
             return self._lock(args[1], force=force)
         return self._error("unsupported command")
 
+    def preflight(self, args: list[str]) -> CommandResult | None:
+        """Validate receiver command metadata before reading stdin."""
+        if not args:
+            return self._error("missing command")
+
+        command = args[0]
+        if command in {"status", "unlock"} and len(args) == 2:  # noqa: PLR2004
+            return self._preflight_dataset(args[1])
+        if command == "lock" and len(args) in {2, 3}:
+            if len(args) == 3 and args[2] != "--force":  # noqa: PLR2004
+                return self._error("unsupported lock option")
+            return self._preflight_dataset(args[1])
+        return None
+
+    @staticmethod
+    def requires_stdin(args: list[str]) -> bool:
+        """Return whether a validated receiver command needs stdin."""
+        return len(args) == RECEIVER_UNLOCK_ARG_COUNT and args[0] == "unlock"
+
     def _allowed_datasets(self) -> set[str]:
         if not self.allow_file.exists():
             return set()
@@ -341,6 +373,11 @@ class Receiver:
             return f"unsafe dataset name: {dataset}"
         if dataset not in self._allowed_datasets():
             return f"dataset not allowed: {dataset}"
+        return None
+
+    def _preflight_dataset(self, dataset: str) -> CommandResult | None:
+        if error := self._validate_dataset(dataset):
+            return self._error(error)
         return None
 
     def _keystatus(self, dataset: str) -> CommandResult:
@@ -401,9 +438,11 @@ class Receiver:
                 continue
             if not is_safe_dataset_name(child_dataset):
                 return self._error(f"unsafe dataset name from zfs list: {child_dataset}")
+            if child_dataset != dataset and not child_dataset.startswith(f"{dataset}/"):
+                return self._error(f"mounted dataset outside target subtree: {child_dataset}")
             mounted_datasets.append(child_dataset)
 
-        return mounted_datasets
+        return sorted(mounted_datasets, key=lambda name: name.count("/"))
 
     def _force_unmount_mounted_datasets(self, dataset: str) -> CommandResult | None:
         mounted_datasets = self._mounted_datasets(dataset)
@@ -485,7 +524,12 @@ class ZfsUnlockClient:
 
     async def unlock(self, dataset: Dataset) -> bool:
         """Unlock a dataset by sending its passphrase to the receiver."""
-        passphrase = dataset.get_passphrase(self.config.secrets)
+        try:
+            passphrase = dataset.get_passphrase(self.config.secrets)
+        except OSError as exc:
+            err_console.print(f"[red]secret failed for {dataset.path}: {exc}[/red]")
+            return False
+
         result = await self.run_remote(["unlock", dataset.path], input_text=f"{passphrase}\n")
         if result.returncode != 0:
             err_console.print(f"[red]unlock failed for {dataset.path}: {result.stderr.strip()}[/red]")
@@ -536,7 +580,7 @@ async def run_unlock(
     datasets = filter_datasets(config.datasets, dataset_filters)
     if not datasets:
         err_console.print("[yellow]No matching datasets found.[/yellow]")
-        return True
+        return False
 
     if dry_run:
         console.print("[yellow]Dry run:[/yellow]")
@@ -571,7 +615,7 @@ async def run_lock(
     datasets = filter_datasets(config.datasets, dataset_filters)
     if not datasets:
         err_console.print("[yellow]No matching datasets found.[/yellow]")
-        return True
+        return False
 
     client = ZfsUnlockClient(config, runner=runner)
     statuses = await asyncio.gather(
@@ -599,7 +643,7 @@ async def run_status(
     datasets = filter_datasets(config.datasets, dataset_filters)
     if not datasets:
         err_console.print("[yellow]No matching datasets found.[/yellow]")
-        return True
+        return False
 
     client = ZfsUnlockClient(config, runner=runner)
     statuses = await asyncio.gather(
@@ -1003,7 +1047,7 @@ def _load_config(config_path: Path | None) -> tuple[Path, Config]:
 
     try:
         config = Config.from_yaml(config_path)
-    except (OSError, TypeError, ValueError, ValidationError) as exc:
+    except (OSError, TypeError, ValueError, ValidationError, yaml.YAMLError) as exc:
         err_console.print(f"[red]Invalid config: {exc}[/red]")
         raise typer.Exit(1) from exc
 
@@ -1014,7 +1058,10 @@ def unlock(
     config_path: Annotated[Path | None, typer.Option("--config", "-c", help="Config file path")] = None,
     dry_run: Annotated[bool, typer.Option("--dry-run", "-n", help="Show what would be done")] = False,
     daemon: Annotated[bool, typer.Option("--daemon", "-d", help="Run continuously")] = False,
-    interval: Annotated[int, typer.Option("--interval", "-i", help="Seconds between checks (1s if unreachable)")] = 30,
+    interval: Annotated[
+        int,
+        typer.Option("--interval", "-i", min=1, help="Seconds between checks (1s if unreachable)"),
+    ] = 30,
     dataset: Annotated[list[str] | None, typer.Option("--dataset", "-D", help="Filter by dataset path")] = None,
 ) -> None:
     """Unlock configured datasets."""
@@ -1099,8 +1146,16 @@ def receiver(
         sys.stderr.write(f"invalid receiver command: {exc}\n")
         raise typer.Exit(1) from exc
 
-    stdin_text = sys.stdin.read() if len(args) == RECEIVER_UNLOCK_ARG_COUNT and args[0] == "unlock" else ""
-    response = Receiver(allow_file=allow_file, zfs_path=zfs_path).handle(args, stdin_text=stdin_text)
+    receiver_instance = Receiver(allow_file=allow_file, zfs_path=zfs_path)
+    if response := receiver_instance.preflight(args):
+        if response.stdout:
+            sys.stdout.write(response.stdout)
+        if response.stderr:
+            sys.stderr.write(response.stderr)
+        raise typer.Exit(response.returncode)
+
+    stdin_text = sys.stdin.read() if receiver_instance.requires_stdin(args) else ""
+    response = receiver_instance.handle(args, stdin_text=stdin_text)
     if response.stdout:
         sys.stdout.write(response.stdout)
     if response.stderr:

@@ -15,6 +15,7 @@ from zfs_unlock import Dataset, app, filter_datasets, find_config, receiver
 
 runner = CliRunner()
 DAEMON_RUN_CALLS = 3
+CLICK_USAGE_ERROR = 2
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 
@@ -135,6 +136,17 @@ def test_cli_invalid_config_reports_clean_error(tmp_path: Path) -> None:
     assert "Invalid config" in result.stderr
 
 
+def test_cli_malformed_yaml_reports_clean_error(tmp_path: Path) -> None:
+    """YAML syntax errors fail with the same concise config message."""
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("host: [zfs-host.example.lan\n")
+
+    result = runner.invoke(app, ["unlock", "--config", str(config_file)])
+
+    assert result.exit_code == 1
+    assert "Invalid config" in result.stderr
+
+
 def test_cli_with_config(tmp_path: Path) -> None:
     """Test CLI runs with config file."""
     config_file = tmp_path / "config.yaml"
@@ -184,6 +196,28 @@ def test_cli_daemon_mode(tmp_path: Path) -> None:
     assert mock_run.call_count == DAEMON_RUN_CALLS
     mock_sleep.assert_any_call(10)
     mock_sleep.assert_any_call(1)
+
+
+@pytest.mark.parametrize("interval", ["0", "-1"])
+def test_cli_daemon_rejects_non_positive_interval(tmp_path: Path, interval: str) -> None:
+    """Daemon mode requires a positive polling interval."""
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("host: test\ndatasets:\n  tank/ds: pass")
+    calls = 0
+
+    async def fake_run_unlock(*_args: object, **_kwargs: object) -> bool:
+        nonlocal calls
+        calls += 1
+        return True
+
+    with (
+        patch("zfs_unlock.run_unlock", new=fake_run_unlock),
+        patch("time.sleep", side_effect=KeyboardInterrupt),
+    ):
+        result = runner.invoke(app, ["unlock", "--config", str(config_file), "--daemon", "--interval", interval])
+
+    assert result.exit_code == CLICK_USAGE_ERROR
+    assert calls == 0
 
 
 def test_cli_lock_command(tmp_path: Path) -> None:
@@ -260,6 +294,8 @@ def test_cli_receiver_uses_ssh_original_command(tmp_path: Path) -> None:
         patch.dict("os.environ", {"SSH_ORIGINAL_COMMAND": "status tank/photos"}),
         patch("zfs_unlock.Receiver") as receiver_cls,
     ):
+        receiver_cls.return_value.preflight.return_value = None
+        receiver_cls.return_value.requires_stdin.return_value = False
         receiver_cls.return_value.handle.return_value = response
         result = runner.invoke(app, ["receiver", "--allow-file", str(allow_file)])
 
@@ -275,6 +311,8 @@ def test_cli_receiver_parses_single_wrapped_command_argument(tmp_path: Path) -> 
     response = MagicMock(returncode=0, stdout="locked\n", stderr="")
 
     with patch("zfs_unlock.Receiver") as receiver_cls:
+        receiver_cls.return_value.preflight.return_value = None
+        receiver_cls.return_value.requires_stdin.return_value = False
         receiver_cls.return_value.handle.return_value = response
         result = runner.invoke(app, ["receiver", "--allow-file", str(allow_file), "status tank/photos"])
 
@@ -304,6 +342,8 @@ def test_cli_receiver_status_does_not_read_stdin(tmp_path: Path) -> None:
         patch("zfs_unlock.sys.stdin.read", side_effect=AssertionError("stdin should not be read")),
         patch("zfs_unlock.Receiver") as receiver_cls,
     ):
+        receiver_cls.return_value.preflight.return_value = None
+        receiver_cls.return_value.requires_stdin.return_value = False
         receiver_cls.return_value.handle.return_value = response
         with pytest.raises(typer.Exit) as exc_info:
             receiver(SimpleNamespace(args=["status tank/photos"]), allow_file=allow_file)
@@ -322,6 +362,8 @@ def test_cli_receiver_unlock_reads_stdin(tmp_path: Path) -> None:
         patch("zfs_unlock.sys.stdin.read", return_value="secret\n") as stdin_read,
         patch("zfs_unlock.Receiver") as receiver_cls,
     ):
+        receiver_cls.return_value.preflight.return_value = None
+        receiver_cls.return_value.requires_stdin.return_value = True
         receiver_cls.return_value.handle.return_value = response
         with pytest.raises(typer.Exit) as exc_info:
             receiver(SimpleNamespace(args=["unlock tank/photos"]), allow_file=allow_file)
@@ -331,6 +373,24 @@ def test_cli_receiver_unlock_reads_stdin(tmp_path: Path) -> None:
     receiver_cls.return_value.handle.assert_called_once_with(["unlock", "tank/photos"], stdin_text="secret\n")
 
 
+def test_cli_receiver_disallowed_unlock_does_not_read_stdin(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Receiver rejects disallowed unlocks before reading passphrase stdin."""
+    allow_file = tmp_path / "allowed"
+    allow_file.write_text("tank/photos\n")
+
+    with (
+        patch("zfs_unlock.sys.stdin.read", side_effect=AssertionError("stdin should not be read")),
+        pytest.raises(typer.Exit) as exc_info,
+    ):
+        receiver(SimpleNamespace(args=["unlock tank/media"]), allow_file=allow_file)
+
+    assert exc_info.value.exit_code == 1
+    assert "not allowed" in capsys.readouterr().err
+
+
 def test_cli_receiver_passes_zfs_path(tmp_path: Path) -> None:
     """Receiver command can use an explicit zfs executable path."""
     allow_file = tmp_path / "allowed"
@@ -338,6 +398,8 @@ def test_cli_receiver_passes_zfs_path(tmp_path: Path) -> None:
     response = MagicMock(returncode=0, stdout="locked\n", stderr="")
 
     with patch("zfs_unlock.Receiver") as receiver_cls:
+        receiver_cls.return_value.preflight.return_value = None
+        receiver_cls.return_value.requires_stdin.return_value = False
         receiver_cls.return_value.handle.return_value = response
         result = runner.invoke(
             app,

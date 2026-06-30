@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+from typing import TYPE_CHECKING
 
-from zfs_unlock import CommandResult, Config, Dataset, run_lock, run_status, run_unlock
+from zfs_unlock import CommandResult, Config, Dataset, SecretsMode, run_lock, run_status, run_unlock
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class RecordingRunner:
@@ -72,6 +76,33 @@ def test_run_unlock_returns_false_when_any_status_fails() -> None:
     assert asyncio.run(run_unlock(config, runner=runner)) is False
 
 
+def test_run_unlock_returns_false_when_file_secret_is_missing(tmp_path: Path) -> None:
+    """run_unlock reports missing file-backed secrets instead of raising."""
+    config = Config(
+        host="zfs-host.example.lan",
+        secrets=SecretsMode.FILES,
+        datasets=[Dataset(path="tank/locked", secret=str(tmp_path / "missing.key"))],
+    )
+    runner = RecordingRunner(CommandResult(returncode=0, stdout="locked\n", stderr=""))
+
+    assert asyncio.run(run_unlock(config, runner=runner)) is False
+
+    assert [call[0][-1] for call in runner.calls] == ["status tank/locked"]
+
+
+def test_run_unlock_returns_false_when_filter_matches_nothing() -> None:
+    """run_unlock reports explicit filters that match no configured datasets."""
+    config = Config(
+        host="zfs-host.example.lan",
+        datasets=[Dataset(path="tank/photos", secret="pass1")],
+    )
+    runner = RecordingRunner()
+
+    assert asyncio.run(run_unlock(config, dataset_filters=["missing"], runner=runner)) is False
+
+    assert runner.calls == []
+
+
 def test_run_lock_locks_only_unlocked_datasets() -> None:
     """run_lock skips already locked datasets."""
     config = Config(
@@ -128,6 +159,19 @@ def test_run_lock_returns_false_when_lock_fails() -> None:
     ]
 
 
+def test_run_lock_returns_false_when_filter_matches_nothing() -> None:
+    """run_lock reports explicit filters that match no configured datasets."""
+    config = Config(
+        host="zfs-host.example.lan",
+        datasets=[Dataset(path="tank/photos", secret="pass1")],
+    )
+    runner = RecordingRunner()
+
+    assert asyncio.run(run_lock(config, dataset_filters=["missing"], runner=runner)) is False
+
+    assert runner.calls == []
+
+
 def test_run_status_checks_all_matching_datasets() -> None:
     """run_status checks all datasets that match the filter."""
     config = Config(
@@ -155,3 +199,16 @@ def test_run_status_returns_false_for_unknown_status() -> None:
     assert asyncio.run(run_status(config, runner=runner)) is False
 
     assert [call[0][-1] for call in runner.calls] == ["status tank/plain"]
+
+
+def test_run_status_returns_false_when_filter_matches_nothing() -> None:
+    """run_status reports explicit filters that match no configured datasets."""
+    config = Config(
+        host="zfs-host.example.lan",
+        datasets=[Dataset(path="tank/photos", secret="pass1")],
+    )
+    runner = RecordingRunner()
+
+    assert asyncio.run(run_status(config, dataset_filters=["missing"], runner=runner)) is False
+
+    assert runner.calls == []

@@ -180,3 +180,20 @@ def test_receiver_lock_force_stops_when_descendant_listing_fails(tmp_path: Path)
     assert runner.calls == [
         (["zfs", "list", "-H", "-o", "name,mounted", "-r", "tank/photos"], None),
     ]
+
+
+def test_receiver_lock_force_rejects_unrelated_mounted_dataset(tmp_path: Path) -> None:
+    """Forced lock refuses unexpected zfs list output outside the target subtree."""
+    allow_file = write_allowlist(tmp_path, "tank/photos")
+    runner = RecordingLocalRunner(
+        CommandResult(returncode=0, stdout="tank/photos\tyes\ntank/other\tyes\n", stderr=""),
+    )
+    receiver = Receiver(allow_file=allow_file, runner=runner)
+
+    response = receiver.handle(["lock", "tank/photos", "--force"], stdin_text="")
+
+    assert response.returncode == 1
+    assert "outside target subtree" in response.stderr
+    assert runner.calls == [
+        (["zfs", "list", "-H", "-o", "name,mounted", "-r", "tank/photos"], None),
+    ]
