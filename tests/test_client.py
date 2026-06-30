@@ -6,15 +6,13 @@ import asyncio
 import sys
 from typing import TYPE_CHECKING
 
-from zfs_unlock import (
+from zfs_unlock.client import SubprocessRunner, ZfsUnlockClient
+from zfs_unlock.config import Config, Dataset
+from zfs_unlock.constants import (
     COMMAND_STARTUP_ERROR_RETURNCODE,
     COMMAND_TIMEOUT_RETURNCODE,
-    CommandResult,
-    Config,
-    Dataset,
-    SubprocessRunner,
-    ZfsUnlockClient,
 )
+from zfs_unlock.process import CommandResult
 
 if TYPE_CHECKING:
     from pathlib import Path

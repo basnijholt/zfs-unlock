@@ -230,26 +230,25 @@ zfs-unlock --help
 
  Unlock OpenZFS datasets over a restricted SSH receiver
 
-╭─ Options ────────────────────────────────────────────────────────────────────╮
-│ --version  -v        Show version and exit                                   │
-│ --help     -h        Show this message and exit.                             │
-╰──────────────────────────────────────────────────────────────────────────────╯
-╭─ Client Commands ────────────────────────────────────────────────────────────╮
-│ unlock    Unlock configured datasets.                                        │
-│ lock      Lock configured datasets.                                          │
-│ status    Show lock status of configured datasets.                           │
-│ doctor    Check client config, SSH key, host reachability, and receiver      │
-│           status.                                                            │
-╰──────────────────────────────────────────────────────────────────────────────╯
-╭─ Setup Commands ─────────────────────────────────────────────────────────────╮
-│ keygen    Generate a dedicated SSH key for zfs-unlock.                       │
-╰──────────────────────────────────────────────────────────────────────────────╯
-╭─ Receiver Commands ──────────────────────────────────────────────────────────╮
-│ receiver  Run the restricted receiver.                                       │
-╰──────────────────────────────────────────────────────────────────────────────╯
-╭─ Service Commands ───────────────────────────────────────────────────────────╮
-│ service   Manage system service                                              │
-╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ Options ──────────────────────────────────────────────────────────────────────────────╮
+│ --version  -v        Show version and exit                                             │
+│ --help     -h        Show this message and exit.                                       │
+╰────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Client Commands ──────────────────────────────────────────────────────────────────────╮
+│ unlock    Unlock configured datasets.                                                  │
+│ lock      Lock configured datasets.                                                    │
+│ status    Show lock status of configured datasets.                                     │
+│ doctor    Check client config, SSH key, host reachability, and receiver status.        │
+╰────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Setup Commands ───────────────────────────────────────────────────────────────────────╮
+│ keygen    Generate a dedicated SSH key for zfs-unlock.                                 │
+╰────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Receiver Commands ────────────────────────────────────────────────────────────────────╮
+│ receiver  Run the restricted receiver.                                                 │
+╰────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Service Commands ─────────────────────────────────────────────────────────────────────╮
+│ service   Manage system service                                                        │
+╰────────────────────────────────────────────────────────────────────────────────────────╯
 
 ```
 
@@ -287,7 +286,7 @@ uv run pytest
 
 # Run lints
 uv run ruff check .
-uv run mypy zfs_unlock.py
+uv run mypy zfs_unlock
 ```
 
 ## Credits

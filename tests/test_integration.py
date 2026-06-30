@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
-from zfs_unlock import CommandResult, Config, Dataset, SecretsMode, run_lock, run_status, run_unlock
+from zfs_unlock.client import run_lock, run_status, run_unlock
+from zfs_unlock.config import Config, Dataset, SecretsMode
+from zfs_unlock.process import CommandResult
 
 if TYPE_CHECKING:
     from pathlib import Path
