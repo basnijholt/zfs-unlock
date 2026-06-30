@@ -6,7 +6,7 @@
     "scripts": {
       "zfs-unlock": "uv run zfs-unlock \"$@\"",
       "test": "uv run pytest",
-      "lint": "uv run ruff check . && uv run mypy zfs_unlock.py",
+      "lint": "uv run ruff check . && uv run mypy zfs_unlock",
       "fmt": "uv run ruff format ."
     }
   }

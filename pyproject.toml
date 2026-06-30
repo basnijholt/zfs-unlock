@@ -29,7 +29,7 @@ dependencies = [
 ]
 
 [project.scripts]
-zfs-unlock = "zfs_unlock:app"
+zfs-unlock = "zfs_unlock.cli:app"
 
 [project.urls]
 Homepage = "https://github.com/basnijholt/zfs-unlock"
@@ -45,7 +45,7 @@ build-backend = "hatchling.build"
 source = "vcs"
 
 [tool.hatch.build.hooks.vcs]
-version-file = "_version.py"
+version-file = "zfs_unlock/_version.py"
 
 [dependency-groups]
 dev = [
