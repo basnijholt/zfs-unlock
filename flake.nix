@@ -63,13 +63,15 @@
           { lib, pkgs, ... }:
           {
             imports = [ ./nix/nixos-module.nix ];
-            services.zfsUnlock.receiver.package = lib.mkDefault self.packages.${pkgs.system}.default;
+            services.zfsUnlock.receiver.package =
+              lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.default;
           };
         client =
           { lib, pkgs, ... }:
           {
             imports = [ ./nix/client-module.nix ];
-            services.zfsUnlock.client.package = lib.mkDefault self.packages.${pkgs.system}.default;
+            services.zfsUnlock.client.package =
+              lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.default;
           };
       };
 
@@ -82,6 +84,7 @@
             modules = [
               self.nixosModules.receiver
               {
+                system.stateVersion = "26.11";
                 services.zfsUnlock.receiver = {
                   enable = true;
                   allowedFrom = [ "192.0.2.7" ];
