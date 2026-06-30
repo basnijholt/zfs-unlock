@@ -124,6 +124,17 @@ def test_cli_missing_config() -> None:
     assert "Config not found" in result.stderr
 
 
+def test_cli_invalid_config_reports_clean_error(tmp_path: Path) -> None:
+    """Invalid config files fail with a concise message."""
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("- host: zfs-host.example.lan\n")
+
+    result = runner.invoke(app, ["unlock", "--config", str(config_file)])
+
+    assert result.exit_code == 1
+    assert "Invalid config" in result.stderr
+
+
 def test_cli_with_config(tmp_path: Path) -> None:
     """Test CLI runs with config file."""
     config_file = tmp_path / "config.yaml"
@@ -139,6 +150,20 @@ def test_cli_with_config(tmp_path: Path) -> None:
 
     assert result.exit_code == 0
     assert len(calls) == 1
+
+
+def test_cli_unlock_exits_nonzero_when_run_fails(tmp_path: Path) -> None:
+    """The unlock command reflects failed unlock work in its exit code."""
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("host: test\ndatasets:\n  tank/ds: pass")
+
+    async def fake_run_unlock(*_args: object, **_kwargs: object) -> bool:
+        return False
+
+    with patch("zfs_unlock.run_unlock", new=fake_run_unlock):
+        result = runner.invoke(app, ["unlock", "--config", str(config_file)])
+
+    assert result.exit_code == 1
 
 
 def test_cli_daemon_mode(tmp_path: Path) -> None:
@@ -167,8 +192,9 @@ def test_cli_lock_command(tmp_path: Path) -> None:
     config_file.write_text("host: test\ndatasets:\n  tank/ds: pass")
     calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
 
-    async def fake_run_lock(*args: object, **kwargs: object) -> None:
+    async def fake_run_lock(*args: object, **kwargs: object) -> bool:
         calls.append((args, kwargs))
+        return True
 
     with patch("zfs_unlock.run_lock", new=fake_run_lock):
         result = runner.invoke(app, ["lock", "--config", str(config_file), "--force"])
@@ -178,14 +204,29 @@ def test_cli_lock_command(tmp_path: Path) -> None:
     assert calls[0][1]["force"] is True
 
 
+def test_cli_lock_exits_nonzero_when_run_fails(tmp_path: Path) -> None:
+    """The lock command reflects failed lock work in its exit code."""
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("host: test\ndatasets:\n  tank/ds: pass")
+
+    async def fake_run_lock(*_args: object, **_kwargs: object) -> bool:
+        return False
+
+    with patch("zfs_unlock.run_lock", new=fake_run_lock):
+        result = runner.invoke(app, ["lock", "--config", str(config_file)])
+
+    assert result.exit_code == 1
+
+
 def test_cli_status_command(tmp_path: Path) -> None:
     """Test CLI status command."""
     config_file = tmp_path / "config.yaml"
     config_file.write_text("host: test\ndatasets:\n  tank/ds: pass")
     calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
 
-    async def fake_run_status(*args: object, **kwargs: object) -> None:
+    async def fake_run_status(*args: object, **kwargs: object) -> bool:
         calls.append((args, kwargs))
+        return True
 
     with patch("zfs_unlock.run_status", new=fake_run_status):
         result = runner.invoke(app, ["status", "--config", str(config_file), "--dataset", "tank/ds"])
@@ -193,6 +234,20 @@ def test_cli_status_command(tmp_path: Path) -> None:
     assert result.exit_code == 0
     assert len(calls) == 1
     assert calls[0][1]["dataset_filters"] == ["tank/ds"]
+
+
+def test_cli_status_exits_nonzero_when_run_fails(tmp_path: Path) -> None:
+    """The status command reflects failed status checks in its exit code."""
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("host: test\ndatasets:\n  tank/ds: pass")
+
+    async def fake_run_status(*_args: object, **_kwargs: object) -> bool:
+        return False
+
+    with patch("zfs_unlock.run_status", new=fake_run_status):
+        result = runner.invoke(app, ["status", "--config", str(config_file)])
+
+    assert result.exit_code == 1
 
 
 def test_cli_receiver_uses_ssh_original_command(tmp_path: Path) -> None:
@@ -226,6 +281,17 @@ def test_cli_receiver_parses_single_wrapped_command_argument(tmp_path: Path) -> 
     assert result.exit_code == 0
     assert result.stdout == "locked\n"
     receiver_cls.return_value.handle.assert_called_once_with(["status", "tank/photos"], stdin_text="")
+
+
+def test_cli_receiver_reports_malformed_wrapped_command(tmp_path: Path) -> None:
+    """Malformed shell quoting in a wrapped receiver command is reported cleanly."""
+    allow_file = tmp_path / "allowed"
+    allow_file.write_text("tank/photos\n")
+
+    result = runner.invoke(app, ["receiver", "--allow-file", str(allow_file), 'status "tank/photos'])
+
+    assert result.exit_code == 1
+    assert "invalid receiver command" in result.stderr
 
 
 def test_cli_receiver_status_does_not_read_stdin(tmp_path: Path) -> None:

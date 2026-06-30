@@ -1,9 +1,9 @@
 # ZFS Unlock Configuration
 # Copy to ~/.config/zfs-unlock/config.yaml on the off-box unlock device.
 
-host: nas.local
+host: zfs-host.example.lan
 user: zfs-unlock
-identity_file: ~/.ssh/zfs-unlock-nas
+identity_file: ~/.ssh/zfs-unlock-receiver
 # port: 22
 # connect_timeout: 5
 

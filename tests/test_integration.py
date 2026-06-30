@@ -87,12 +87,44 @@ def test_run_lock_locks_only_unlocked_datasets() -> None:
         CommandResult(returncode=0, stdout="locked tank/open\n", stderr=""),
     )
 
-    asyncio.run(run_lock(config, force=True, runner=runner))
+    assert asyncio.run(run_lock(config, force=True, runner=runner)) is True
 
     assert [call[0][-1] for call in runner.calls] == [
         "status tank/open",
         "status tank/locked",
         "lock tank/open --force",
+    ]
+
+
+def test_run_lock_returns_false_when_status_fails() -> None:
+    """run_lock reports status check failures to callers."""
+    config = Config(
+        host="zfs-host.example.lan",
+        datasets=[Dataset(path="tank/open", secret="pass1")],
+    )
+    runner = RecordingRunner(CommandResult(returncode=1, stdout="", stderr="ssh failed\n"))
+
+    assert asyncio.run(run_lock(config, runner=runner)) is False
+
+    assert [call[0][-1] for call in runner.calls] == ["status tank/open"]
+
+
+def test_run_lock_returns_false_when_lock_fails() -> None:
+    """run_lock reports lock command failures to callers."""
+    config = Config(
+        host="zfs-host.example.lan",
+        datasets=[Dataset(path="tank/open", secret="pass1")],
+    )
+    runner = RecordingRunner(
+        CommandResult(returncode=0, stdout="unlocked\n", stderr=""),
+        CommandResult(returncode=1, stdout="", stderr="busy\n"),
+    )
+
+    assert asyncio.run(run_lock(config, runner=runner)) is False
+
+    assert [call[0][-1] for call in runner.calls] == [
+        "status tank/open",
+        "lock tank/open",
     ]
 
 
@@ -107,6 +139,19 @@ def test_run_status_checks_all_matching_datasets() -> None:
     )
     runner = RecordingRunner(CommandResult(returncode=0, stdout="locked\n", stderr=""))
 
-    asyncio.run(run_status(config, dataset_filters=["photos"], runner=runner))
+    assert asyncio.run(run_status(config, dataset_filters=["photos"], runner=runner)) is True
 
     assert [call[0][-1] for call in runner.calls] == ["status tank/photos"]
+
+
+def test_run_status_returns_false_for_unknown_status() -> None:
+    """run_status reports unknown receiver status to callers."""
+    config = Config(
+        host="zfs-host.example.lan",
+        datasets=[Dataset(path="tank/plain", secret="pass1")],
+    )
+    runner = RecordingRunner(CommandResult(returncode=0, stdout="unknown\n", stderr=""))
+
+    assert asyncio.run(run_status(config, runner=runner)) is False
+
+    assert [call[0][-1] for call in runner.calls] == ["status tank/plain"]

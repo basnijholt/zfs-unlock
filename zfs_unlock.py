@@ -16,11 +16,11 @@ import time
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated, Protocol
+from typing import Annotated, Any, Protocol, cast
 
 import typer
 import yaml
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from rich.console import Console
 
 try:
@@ -116,6 +116,11 @@ class SecretsMode(StrEnum):
     INLINE = "inline"
 
 
+def _read_secret_file(path: Path) -> str:
+    """Read a text secret file while preserving intentional spaces."""
+    return path.read_text().rstrip("\r\n")
+
+
 def resolve_secret(value: str, mode: SecretsMode) -> str:
     """Resolve a secret value based on the configured mode."""
     if mode == SecretsMode.INLINE:
@@ -124,10 +129,10 @@ def resolve_secret(value: str, mode: SecretsMode) -> str:
     path = Path(value).expanduser()
 
     if mode == SecretsMode.FILES:
-        return path.read_text().strip()
+        return _read_secret_file(path)
 
     if path.exists() and path.is_file():
-        return path.read_text().strip()
+        return _read_secret_file(path)
     return value
 
 
@@ -152,22 +157,39 @@ class Dataset(BaseModel):
 class Config(BaseModel):
     """Application configuration for the off-box unlock client."""
 
+    model_config = ConfigDict(extra="forbid")
+
     host: str
     user: str = "zfs-unlock"
-    port: int = 22
+    port: Annotated[int, Field(ge=1, le=65535)] = 22
     identity_file: Path | None = None
-    connect_timeout: int = 5
-    command_timeout: float = 30
+    connect_timeout: Annotated[int, Field(gt=0)] = 5
+    command_timeout: Annotated[float, Field(gt=0)] = 30
     secrets: SecretsMode = SecretsMode.AUTO
     datasets: list[Dataset]
 
     @classmethod
     def from_yaml(cls, path: Path) -> Config:  # noqa: D102
-        data = yaml.safe_load(path.read_text())
+        raw_data = yaml.safe_load(path.read_text())
+        if raw_data is None:
+            raw_data = {}
+        if not isinstance(raw_data, dict):
+            msg = "config file must contain a YAML mapping"
+            raise TypeError(msg)
+        if not all(isinstance(key, str) for key in raw_data):
+            msg = "config keys must be strings"
+            raise TypeError(msg)
 
+        data = cast("dict[str, Any]", dict(raw_data))
         datasets_raw = data.pop("datasets", {})
-        datasets = [Dataset(path=ds_path, secret=secret) for ds_path, secret in datasets_raw.items()]
+        if not isinstance(datasets_raw, dict):
+            msg = "config field 'datasets' must be a mapping"
+            raise TypeError(msg)
+        if not all(isinstance(ds_path, str) and isinstance(secret, str) for ds_path, secret in datasets_raw.items()):
+            msg = "config field 'datasets' must map dataset names to string secrets"
+            raise TypeError(msg)
 
+        datasets = [Dataset(path=ds_path, secret=secret) for ds_path, secret in datasets_raw.items()]
         return cls(datasets=datasets, **data)
 
 
@@ -353,10 +375,15 @@ class Receiver:
 
         result = self.runner.run([self.zfs_path, "load-key", "-L", "prompt", dataset], input_text=stdin_text)
         if result.returncode != 0:
-            return CommandResult(returncode=1, stdout="", stderr=result.stderr)
-
-        self.runner.run([self.zfs_path, "mount", "-a"])
-        return CommandResult(returncode=0, stdout=f"unlocked {dataset}\n", stderr="")
+            response = CommandResult(returncode=1, stdout="", stderr=result.stderr)
+        else:
+            mount = self.runner.run([self.zfs_path, "mount", "-a"])
+            response = (
+                CommandResult(returncode=0, stdout=f"unlocked {dataset}\n", stderr="")
+                if mount.returncode == 0
+                else CommandResult(returncode=1, stdout="", stderr=mount.stderr)
+            )
+        return response
 
     def _mounted_datasets(self, dataset: str) -> list[str] | CommandResult:
         listed = self.runner.run([self.zfs_path, "list", "-H", "-o", "name,mounted", "-r", dataset])
@@ -539,20 +566,27 @@ async def run_lock(
     force: bool = False,
     dataset_filters: list[str] | None = None,
     runner: CommandRunner | None = None,
-) -> None:
+) -> bool:
     """Lock all configured datasets that are currently unlocked."""
     datasets = filter_datasets(config.datasets, dataset_filters)
     if not datasets:
         err_console.print("[yellow]No matching datasets found.[/yellow]")
-        return
+        return True
 
     client = ZfsUnlockClient(config, runner=runner)
-    statuses = await asyncio.gather(*[client.is_locked(dataset, quiet=True) for dataset in datasets])
+    statuses = await asyncio.gather(
+        *[client.is_locked(dataset, quiet=True) for dataset in datasets],
+        return_exceptions=True,
+    )
+    success = True
     for dataset, locked in zip(datasets, statuses, strict=True):
-        if locked is False:
-            await client.lock(dataset, force=force)
+        if isinstance(locked, Exception) or locked is None:
+            success = False
+        elif locked is False:
+            success = await client.lock(dataset, force=force) and success
         elif locked is True:
             console.print(f"[dim]Already locked: {dataset.path}[/dim]")
+    return success
 
 
 async def run_status(
@@ -560,22 +594,28 @@ async def run_status(
     *,
     dataset_filters: list[str] | None = None,
     runner: CommandRunner | None = None,
-) -> None:
+) -> bool:
     """Show lock status of all configured datasets."""
     datasets = filter_datasets(config.datasets, dataset_filters)
     if not datasets:
         err_console.print("[yellow]No matching datasets found.[/yellow]")
-        return
+        return True
 
     client = ZfsUnlockClient(config, runner=runner)
-    statuses = await asyncio.gather(*[client.is_locked(dataset, quiet=True) for dataset in datasets])
+    statuses = await asyncio.gather(
+        *[client.is_locked(dataset, quiet=True) for dataset in datasets],
+        return_exceptions=True,
+    )
+    success = True
     for dataset, locked in zip(datasets, statuses, strict=True):
-        if locked is True:
+        if isinstance(locked, Exception) or locked is None:
+            console.print(f"[red]?[/red] {dataset.path} [dim]unknown[/dim]")
+            success = False
+        elif locked is True:
             console.print(f"[yellow]LOCK[/yellow] {dataset.path} [dim]locked[/dim]")
         elif locked is False:
             console.print(f"[green]OPEN[/green] {dataset.path} [dim]unlocked[/dim]")
-        else:
-            console.print(f"[red]?[/red] {dataset.path} [dim]unknown[/dim]")
+    return success
 
 
 def find_config() -> Path | None:
@@ -961,7 +1001,13 @@ def _load_config(config_path: Path | None) -> tuple[Path, Config]:
         err_console.print(EXAMPLE_CONFIG)
         raise typer.Exit(1)
 
-    return config_path, Config.from_yaml(config_path)
+    try:
+        config = Config.from_yaml(config_path)
+    except (OSError, TypeError, ValueError, ValidationError) as exc:
+        err_console.print(f"[red]Invalid config: {exc}[/red]")
+        raise typer.Exit(1) from exc
+
+    return config_path, config
 
 
 def unlock(
@@ -1000,7 +1046,9 @@ def unlock(
                 console.print("\n[bold]Stopped[/bold]")
                 break
     else:
-        asyncio.run(run_unlock(config, dry_run=dry_run, dataset_filters=dataset))
+        success = asyncio.run(run_unlock(config, dry_run=dry_run, dataset_filters=dataset))
+        if not success:
+            raise typer.Exit(1)
 
 
 def lock(
@@ -1011,7 +1059,9 @@ def lock(
     """Lock configured datasets."""
     config_path, config = _load_config(config_path)
     console.print(f"[dim]{config_path}[/dim]")
-    asyncio.run(run_lock(config, force=force, dataset_filters=dataset))
+    success = asyncio.run(run_lock(config, force=force, dataset_filters=dataset))
+    if not success:
+        raise typer.Exit(1)
 
 
 def status(
@@ -1021,7 +1071,9 @@ def status(
     """Show lock status of configured datasets."""
     config_path, config = _load_config(config_path)
     console.print(f"[dim]{config_path}[/dim]")
-    asyncio.run(run_status(config, dataset_filters=dataset))
+    success = asyncio.run(run_status(config, dataset_filters=dataset))
+    if not success:
+        raise typer.Exit(1)
 
 
 def receiver(
@@ -1036,12 +1088,16 @@ def receiver(
     ] = "zfs",
 ) -> None:
     """Run the restricted receiver."""
-    args = list(ctx.args)
-    if len(args) == 1:
-        args = parse_receiver_command(args[0])
-    elif not args:
-        original_command = os.environ.get("SSH_ORIGINAL_COMMAND", "")
-        args = parse_receiver_command(original_command) if original_command else []
+    try:
+        args = list(ctx.args)
+        if len(args) == 1:
+            args = parse_receiver_command(args[0])
+        elif not args:
+            original_command = os.environ.get("SSH_ORIGINAL_COMMAND", "")
+            args = parse_receiver_command(original_command) if original_command else []
+    except ValueError as exc:
+        sys.stderr.write(f"invalid receiver command: {exc}\n")
+        raise typer.Exit(1) from exc
 
     stdin_text = sys.stdin.read() if len(args) == RECEIVER_UNLOCK_ARG_COUNT and args[0] == "unlock" else ""
     response = Receiver(allow_file=allow_file, zfs_path=zfs_path).handle(args, stdin_text=stdin_text)

@@ -104,6 +104,27 @@ def test_receiver_unlock_loads_key_from_stdin_and_mounts(tmp_path: Path) -> None
     ]
 
 
+def test_receiver_unlock_fails_when_mount_fails(tmp_path: Path) -> None:
+    """Receiver does not report unlock success if mounting fails afterwards."""
+    allow_file = write_allowlist(tmp_path, "tank/photos")
+    runner = RecordingLocalRunner(
+        CommandResult(returncode=0, stdout="unavailable\n", stderr=""),
+        CommandResult(returncode=0, stdout="", stderr=""),
+        CommandResult(returncode=1, stdout="", stderr="mount failed\n"),
+    )
+    receiver = Receiver(allow_file=allow_file, runner=runner)
+
+    response = receiver.handle(["unlock", "tank/photos"], stdin_text="secret-pass\n")
+
+    assert response.returncode == 1
+    assert response.stderr == "mount failed\n"
+    assert runner.calls == [
+        (["zfs", "get", "-H", "-o", "value", "keystatus", "tank/photos"], None),
+        (["zfs", "load-key", "-L", "prompt", "tank/photos"], "secret-pass\n"),
+        (["zfs", "mount", "-a"], None),
+    ]
+
+
 def test_receiver_unlock_skips_already_available_key(tmp_path: Path) -> None:
     """Receiver does not re-load an already available key."""
     allow_file = write_allowlist(tmp_path, "tank/photos")

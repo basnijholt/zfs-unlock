@@ -4,6 +4,7 @@ from pathlib import Path
 from textwrap import dedent
 
 import pytest
+from pydantic import ValidationError
 
 from zfs_unlock import DEFAULT_IDENTITY_FILE, EXAMPLE_CONFIG, Config, Dataset, SecretsMode, resolve_secret
 
@@ -18,12 +19,13 @@ def test_public_defaults_use_receiver_terminology() -> None:
     old_host_name = "".join(chr(codepoint) for codepoint in (110, 97, 115))
     old_host = f"{old_host_name}.local"
     old_identity_file = f"zfs-unlock-{old_host_name}"
+    public_config_text = EXAMPLE_CONFIG + Path("config.example.yaml").read_text()
 
     assert Path("~/.ssh/zfs-unlock-receiver") == DEFAULT_IDENTITY_FILE
-    assert "host: zfs-host.example.lan" in EXAMPLE_CONFIG
-    assert "zfs-unlock-receiver" in EXAMPLE_CONFIG
-    assert old_host not in EXAMPLE_CONFIG
-    assert old_identity_file not in EXAMPLE_CONFIG
+    assert "host: zfs-host.example.lan" in public_config_text
+    assert "zfs-unlock-receiver" in public_config_text
+    assert old_host not in public_config_text
+    assert old_identity_file not in public_config_text
 
 
 class TestResolveSecret:
@@ -43,6 +45,13 @@ class TestResolveSecret:
         secret_file.write_text("file-content\n")
 
         assert resolve_secret(str(secret_file), SecretsMode.FILES) == "file-content"
+
+    def test_files_mode_preserves_spaces_in_secret(self, tmp_path: Path) -> None:
+        """File-backed secrets trim line endings but preserve passphrase spaces."""
+        secret_file = tmp_path / "secret"
+        secret_file.write_text("  file-content  \n")
+
+        assert resolve_secret(str(secret_file), SecretsMode.FILES) == "  file-content  "
 
     def test_files_mode_raises_on_missing(self) -> None:
         """Files mode raises error if file doesn't exist."""
@@ -142,3 +151,50 @@ class TestConfig:
         assert config.identity_file == identity_file
         assert config.connect_timeout == CUSTOM_CONNECT_TIMEOUT
         assert config.datasets[0].get_passphrase(config.secrets) == "test-passphrase"
+
+    def test_from_yaml_rejects_non_mapping_root(self, tmp_path: Path) -> None:
+        """Config files must be YAML mappings."""
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("- host: zfs-host.example.lan\n")
+
+        with pytest.raises(TypeError, match="YAML mapping"):
+            Config.from_yaml(config_file)
+
+    def test_from_yaml_rejects_non_mapping_datasets(self, tmp_path: Path) -> None:
+        """Dataset config must be a mapping from dataset to secret."""
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("host: zfs-host.example.lan\ndatasets:\n  - tank/photos\n")
+
+        with pytest.raises(TypeError, match=r"datasets.*mapping"):
+            Config.from_yaml(config_file)
+
+    def test_from_yaml_rejects_unknown_top_level_keys(self, tmp_path: Path) -> None:
+        """Unknown config keys are rejected instead of silently ignored."""
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            dedent("""\
+            host: zfs-host.example.lan
+            identty_file: ~/.ssh/typo
+            datasets:
+              tank/photos: passphrase
+            """),
+        )
+
+        with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+            Config.from_yaml(config_file)
+
+    def test_from_yaml_rejects_invalid_timeouts(self, tmp_path: Path) -> None:
+        """Timeouts must be positive."""
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            dedent("""\
+            host: zfs-host.example.lan
+            connect_timeout: 0
+            command_timeout: -1
+            datasets:
+              tank/photos: passphrase
+            """),
+        )
+
+        with pytest.raises(ValidationError):
+            Config.from_yaml(config_file)

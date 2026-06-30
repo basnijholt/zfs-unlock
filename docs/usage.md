@@ -82,7 +82,7 @@ datasets:
 | --- | --- | --- |
 | `host` | required | SSH hostname or IP address for the ZFS host. |
 | `user` | `zfs-unlock` | SSH receiver user. |
-| `identity_file` | `~/.ssh/zfs-unlock-receiver` | Dedicated SSH key for the receiver. |
+| `identity_file` | unset | Dedicated SSH key for the receiver, commonly `~/.ssh/zfs-unlock-receiver`. |
 | `command_timeout` | `30` | Per-command timeout in seconds. |
 | `secrets` | `auto` | `auto`, `files`, or `inline`. |
 | `datasets` | required | Mapping from dataset name to passphrase value or file path. |
