@@ -74,7 +74,7 @@ docs/                    # Zensical documentation site
 
 1. Update `VERSION`.
 2. Open and merge a PR.
-3. Publish a GitHub release tagged `vX.Y.Z`.
+3. Publish a GitHub release tagged `vX.Y.Z`, where `X.Y.Z` exactly matches `VERSION`.
 4. Confirm the `Upload Python Package` workflow publishes to PyPI.
 
 ## License

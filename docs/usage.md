@@ -82,7 +82,9 @@ datasets:
 | --- | --- | --- |
 | `host` | required | SSH hostname or IP address for the ZFS host. |
 | `user` | `zfs-unlock` | SSH receiver user. |
+| `port` | `22` | SSH port on the ZFS host. |
 | `identity_file` | unset | Dedicated SSH key for the receiver, commonly `~/.ssh/zfs-unlock-receiver`. |
+| `connect_timeout` | `5` | SSH connection timeout in seconds. |
 | `command_timeout` | `30` | Per-command timeout in seconds. |
 | `secrets` | `auto` | `auto`, `files`, or `inline`. |
 | `datasets` | required | Mapping from dataset name to passphrase value or file path. |
@@ -121,8 +123,12 @@ services.zfsUnlock.client = {
   enable = true;
   user = "alice";
   group = "users";
+  configFile = "/home/alice/.config/zfs-unlock/config.yaml";
 };
 ```
+
+The client daemon defaults to `root`.
+When `user` is set to a non-root account, that user must already exist and own or be able to read the configured key and secret files.
 
 Common client options:
 
@@ -130,9 +136,11 @@ Common client options:
 | --- | --- | --- |
 | `enable` | `false` | Enable the unlock daemon. |
 | `package` | flake package | Package providing `zfs-unlock`. |
-| `user` | required | User that owns the config and key files. |
-| `group` | user's group | Service group. |
+| `user` | `root` | User that runs the daemon and owns or can read the config and key files. |
+| `group` | unset | Optional service group. |
 | `interval` | `30` | Relaxed daemon interval in seconds. |
+| `configFile` | unset | Optional explicit client configuration file. |
+| `extraArgs` | `[]` | Additional arguments appended to `zfs-unlock unlock --daemon`. |
 
 ## Portable Service Commands
 

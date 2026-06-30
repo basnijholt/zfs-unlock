@@ -10,6 +10,31 @@ from pathlib import Path
 import pytest
 
 
+def run_nix_eval(expr: str, repo: Path | None = None) -> subprocess.CompletedProcess[str]:
+    """Run a Nix eval expression for module tests."""
+    nix = shutil.which("nix")
+    if nix is None:
+        pytest.skip("nix is not installed")
+
+    repo = repo or Path(__file__).resolve().parents[1]
+    return subprocess.run(
+        [
+            nix,
+            "--extra-experimental-features",
+            "nix-command flakes",
+            "eval",
+            "--impure",
+            "--json",
+            "--expr",
+            expr,
+        ],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
 def test_nixos_receiver_module_generates_restricted_receiver_config() -> None:
     """The flake exports a NixOS module that generates the receiver policy."""
     nix = shutil.which("nix")
@@ -232,6 +257,53 @@ def test_nixos_receiver_module_can_disable_linger() -> None:
     assert result.returncode == 0, result.stderr
     data = json.loads(result.stdout)
     assert data["linger"] is False
+
+
+@pytest.mark.parametrize(
+    ("override", "message"),
+    [
+        ('allowedFrom = [ "192.0.2.7\\"" ];', "allowedFrom entries must not contain quotes or newlines"),
+        (
+            'authorizedKeys = [ "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestOnlyKey\\nssh-ed25519 AAAAInjected" ];',
+            "authorizedKeys entries must not contain newlines",
+        ),
+        ('datasets = [ "tank/photos bad" ];', "datasets entries must be safe OpenZFS dataset names"),
+    ],
+)
+def test_nixos_receiver_module_rejects_unsafe_policy_strings(override: str, message: str) -> None:
+    """Unsafe receiver option strings fail evaluation before policy files are generated."""
+    repo = Path(__file__).resolve().parents[1]
+    expr = f"""
+      let
+        flake = builtins.getFlake "path:{repo}";
+        system = builtins.currentSystem;
+        pkgs = import flake.inputs.nixpkgs {{ inherit system; }};
+        receiverConfig = {{
+          enable = true;
+          allowedFrom = [ "192.0.2.7" ];
+          authorizedKeys = [ "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestOnlyKey pi4-zfs-unlock" ];
+          datasets = [ "tank/photos" ];
+          package = pkgs.writeShellScriptBin "zfs-unlock" "exit 0";
+        }} // {{
+          {override}
+        }};
+        eval = flake.inputs.nixpkgs.lib.nixosSystem {{
+          inherit system;
+          modules = [
+            flake.nixosModules.receiver
+            ({{
+              system.stateVersion = "26.11";
+              services.zfsUnlock.receiver = receiverConfig;
+            }})
+          ];
+        }};
+      in eval.config.system.build.toplevel.drvPath
+    """
+
+    result = run_nix_eval(expr, repo)
+
+    assert result.returncode != 0
+    assert message in result.stderr
 
 
 def test_nixos_client_module_generates_packaged_daemon_service() -> None:
