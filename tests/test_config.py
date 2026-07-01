@@ -6,7 +6,7 @@ from textwrap import dedent
 import pytest
 from pydantic import ValidationError
 
-from zfs_unlock.config import Config, Dataset, SecretsMode, resolve_secret
+from zfs_unlock.config import Config, Dataset, SecretsMode, _resolve_secret
 from zfs_unlock.constants import DEFAULT_IDENTITY_FILE, EXAMPLE_CONFIG
 
 DEFAULT_PORT = 22
@@ -30,45 +30,45 @@ def test_public_defaults_use_receiver_terminology() -> None:
 
 
 class TestResolveSecret:
-    """Tests for resolve_secret function."""
+    """Tests for secret resolution."""
 
     def test_inline_mode_returns_literal(self, tmp_path: Path) -> None:
         """Inline mode always returns the literal value."""
         secret_file = tmp_path / "secret"
         secret_file.write_text("file-content")
 
-        assert resolve_secret(str(secret_file), SecretsMode.INLINE) == str(secret_file)
-        assert resolve_secret("literal-value", SecretsMode.INLINE) == "literal-value"
+        assert _resolve_secret(str(secret_file), SecretsMode.INLINE) == str(secret_file)
+        assert _resolve_secret("literal-value", SecretsMode.INLINE) == "literal-value"
 
     def test_files_mode_reads_file(self, tmp_path: Path) -> None:
         """Files mode always reads from file."""
         secret_file = tmp_path / "secret"
         secret_file.write_text("file-content\n")
 
-        assert resolve_secret(str(secret_file), SecretsMode.FILES) == "file-content"
+        assert _resolve_secret(str(secret_file), SecretsMode.FILES) == "file-content"
 
     def test_files_mode_preserves_spaces_in_secret(self, tmp_path: Path) -> None:
         """File-backed secrets trim line endings but preserve passphrase spaces."""
         secret_file = tmp_path / "secret"
         secret_file.write_text("  file-content  \n")
 
-        assert resolve_secret(str(secret_file), SecretsMode.FILES) == "  file-content  "
+        assert _resolve_secret(str(secret_file), SecretsMode.FILES) == "  file-content  "
 
     def test_files_mode_raises_on_missing(self) -> None:
         """Files mode raises error if file doesn't exist."""
         with pytest.raises(FileNotFoundError):
-            resolve_secret("/nonexistent/path", SecretsMode.FILES)
+            _resolve_secret("/nonexistent/path", SecretsMode.FILES)
 
     def test_auto_mode_reads_existing_file(self, tmp_path: Path) -> None:
         """Auto mode reads from file if it exists."""
         secret_file = tmp_path / "secret"
         secret_file.write_text("file-content\n")
 
-        assert resolve_secret(str(secret_file), SecretsMode.AUTO) == "file-content"
+        assert _resolve_secret(str(secret_file), SecretsMode.AUTO) == "file-content"
 
     def test_auto_mode_returns_literal_if_no_file(self) -> None:
         """Auto mode returns literal if file doesn't exist."""
-        assert resolve_secret("my-passphrase", SecretsMode.AUTO) == "my-passphrase"
+        assert _resolve_secret("my-passphrase", SecretsMode.AUTO) == "my-passphrase"
 
 
 class TestDataset:

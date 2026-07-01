@@ -11,8 +11,8 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
-from zfs_unlock.cli import app, receiver
-from zfs_unlock.client import filter_datasets
+from zfs_unlock.cli import _receiver, app
+from zfs_unlock.client import _filter_datasets
 from zfs_unlock.config import Dataset, find_config
 
 runner = CliRunner()
@@ -29,7 +29,7 @@ def write_private_file(path: Path, text: str = "secret") -> Path:
 
 
 class TestFilterDatasets:
-    """Tests for filter_datasets function."""
+    """Tests for dataset filtering."""
 
     def test_no_filter_returns_all(self) -> None:
         """No filter returns all datasets."""
@@ -38,7 +38,7 @@ class TestFilterDatasets:
             Dataset(path="tank/syncthing", secret="pass2"),
         ]
 
-        assert filter_datasets(datasets, None) == datasets
+        assert _filter_datasets(datasets, None) == datasets
 
     def test_single_filter_partial_match(self) -> None:
         """Single filter matches partial path."""
@@ -48,7 +48,7 @@ class TestFilterDatasets:
             Dataset(path="tank/frigate", secret="pass3"),
         ]
 
-        result = filter_datasets(datasets, ["photos"])
+        result = _filter_datasets(datasets, ["photos"])
 
         assert len(result) == 1
         assert result[0].path == "tank/photos"
@@ -350,7 +350,7 @@ def test_cli_receiver_status_does_not_read_stdin(tmp_path: Path) -> None:
         receiver_cls.return_value.parse.return_value = request
         receiver_cls.return_value.handle.return_value = response
         with pytest.raises(typer.Exit) as exc_info:
-            receiver(SimpleNamespace(args=["status tank/photos"]), allow_file=allow_file)
+            _receiver(SimpleNamespace(args=["status tank/photos"]), allow_file=allow_file)
 
     assert exc_info.value.exit_code == 0
     receiver_cls.return_value.parse.assert_called_once_with(["status", "tank/photos"])
@@ -371,7 +371,7 @@ def test_cli_receiver_unlock_reads_stdin(tmp_path: Path) -> None:
         receiver_cls.return_value.parse.return_value = request
         receiver_cls.return_value.handle.return_value = response
         with pytest.raises(typer.Exit) as exc_info:
-            receiver(SimpleNamespace(args=["unlock tank/photos"]), allow_file=allow_file)
+            _receiver(SimpleNamespace(args=["unlock tank/photos"]), allow_file=allow_file)
 
     assert exc_info.value.exit_code == 0
     stdin_read.assert_called_once_with()
@@ -391,7 +391,7 @@ def test_cli_receiver_disallowed_unlock_does_not_read_stdin(
         patch("zfs_unlock.cli.sys.stdin.read", side_effect=AssertionError("stdin should not be read")),
         pytest.raises(typer.Exit) as exc_info,
     ):
-        receiver(SimpleNamespace(args=["unlock tank/media"]), allow_file=allow_file)
+        _receiver(SimpleNamespace(args=["unlock tank/media"]), allow_file=allow_file)
 
     assert exc_info.value.exit_code == 1
     assert "not allowed" in capsys.readouterr().err

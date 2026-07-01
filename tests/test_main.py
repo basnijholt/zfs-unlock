@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 from zfs_unlock.config import is_safe_dataset_name
 from zfs_unlock.process import CommandResult
-from zfs_unlock.receiver import Receiver, ReceiverRequest, parse_receiver_command
+from zfs_unlock.receiver import Receiver, _ReceiverRequest, parse_receiver_command
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -35,10 +35,10 @@ def write_allowlist(tmp_path: Path, *datasets: str) -> Path:
     return allow_file
 
 
-def parse_request(receiver: Receiver, *args: str) -> ReceiverRequest:
+def parse_request(receiver: Receiver, *args: str) -> _ReceiverRequest:
     """Parse raw receiver args and assert they are accepted."""
     request = receiver.parse(list(args))
-    assert isinstance(request, ReceiverRequest), request.stderr
+    assert isinstance(request, _ReceiverRequest), request.stderr
     return request
 
 

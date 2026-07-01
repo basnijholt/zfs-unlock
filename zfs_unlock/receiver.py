@@ -20,13 +20,13 @@ def parse_receiver_command(command: str) -> list[str]:
     return shlex.split(command)
 
 
-DATASET_COMMAND_ARG_COUNT = 2
-LOCK_COMMAND_ARG_COUNTS = {2, 3}
-LOCK_FORCE_ARG_COUNT = 3
-FORCE_LOCK_OPTION = "--force"
+_DATASET_COMMAND_ARG_COUNT = 2
+_LOCK_COMMAND_ARG_COUNTS = {2, 3}
+_LOCK_FORCE_ARG_COUNT = 3
+_FORCE_LOCK_OPTION = "--force"
 
 
-class ReceiverAction(StrEnum):
+class _ReceiverAction(StrEnum):
     """Receiver actions accepted over the forced SSH command."""
 
     STATUS = "status"
@@ -35,17 +35,17 @@ class ReceiverAction(StrEnum):
 
 
 @dataclass(frozen=True)
-class ReceiverRequest:
+class _ReceiverRequest:
     """Validated receiver request."""
 
-    action: ReceiverAction
+    action: _ReceiverAction
     dataset: str
     force: bool = False
 
     @property
     def requires_stdin(self) -> bool:
         """Return whether the request needs stdin from the SSH client."""
-        return self.action == ReceiverAction.UNLOCK
+        return self.action == _ReceiverAction.UNLOCK
 
 
 class Receiver:
@@ -63,54 +63,54 @@ class Receiver:
         self.runner = runner or LocalSubprocessRunner()
         self.zfs_path = zfs_path
 
-    def parse(self, args: list[str]) -> ReceiverRequest | CommandResult:
+    def parse(self, args: list[str]) -> _ReceiverRequest | CommandResult:
         """Validate raw receiver arguments before reading stdin."""
         if not args:
             return self._error("missing command")
 
         try:
-            action = ReceiverAction(args[0])
+            action = _ReceiverAction(args[0])
         except ValueError:
             return self._error("unsupported command")
 
-        if action in {ReceiverAction.STATUS, ReceiverAction.UNLOCK}:
+        if action in {_ReceiverAction.STATUS, _ReceiverAction.UNLOCK}:
             return self._parse_dataset_request(action, args)
-        if action == ReceiverAction.LOCK:
+        if action == _ReceiverAction.LOCK:
             return self._parse_lock_request(args)
         return self._error("unsupported command")
 
-    def _parse_dataset_request(self, action: ReceiverAction, args: list[str]) -> ReceiverRequest | CommandResult:
-        if len(args) != DATASET_COMMAND_ARG_COUNT:
+    def _parse_dataset_request(self, action: _ReceiverAction, args: list[str]) -> _ReceiverRequest | CommandResult:
+        if len(args) != _DATASET_COMMAND_ARG_COUNT:
             return self._error("unsupported command")
         return self._validated_request(action, args[1])
 
-    def _parse_lock_request(self, args: list[str]) -> ReceiverRequest | CommandResult:
-        if len(args) not in LOCK_COMMAND_ARG_COUNTS:
+    def _parse_lock_request(self, args: list[str]) -> _ReceiverRequest | CommandResult:
+        if len(args) not in _LOCK_COMMAND_ARG_COUNTS:
             return self._error("unsupported command")
 
-        force = len(args) == LOCK_FORCE_ARG_COUNT
-        if force and args[2] != FORCE_LOCK_OPTION:
+        force = len(args) == _LOCK_FORCE_ARG_COUNT
+        if force and args[2] != _FORCE_LOCK_OPTION:
             return self._error("unsupported lock option")
-        return self._validated_request(ReceiverAction.LOCK, args[1], force=force)
+        return self._validated_request(_ReceiverAction.LOCK, args[1], force=force)
 
     def _validated_request(
         self,
-        action: ReceiverAction,
+        action: _ReceiverAction,
         dataset: str,
         *,
         force: bool = False,
-    ) -> ReceiverRequest | CommandResult:
+    ) -> _ReceiverRequest | CommandResult:
         if error := self._validate_dataset(dataset):
             return self._error(error)
-        return ReceiverRequest(action=action, dataset=dataset, force=force)
+        return _ReceiverRequest(action=action, dataset=dataset, force=force)
 
-    def handle(self, request: ReceiverRequest, *, stdin_text: str) -> CommandResult:
+    def handle(self, request: _ReceiverRequest, *, stdin_text: str) -> CommandResult:
         """Handle a restricted receiver command."""
-        if request.action == ReceiverAction.STATUS:
+        if request.action == _ReceiverAction.STATUS:
             return self._status(request.dataset)
-        if request.action == ReceiverAction.UNLOCK:
+        if request.action == _ReceiverAction.UNLOCK:
             return self._unlock(request.dataset, stdin_text=stdin_text)
-        if request.action == ReceiverAction.LOCK:
+        if request.action == _ReceiverAction.LOCK:
             return self._lock(request.dataset, force=request.force)
         return self._error("unsupported command")
 

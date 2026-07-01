@@ -27,7 +27,7 @@ def _read_secret_file(path: Path) -> str:
     return path.read_text().rstrip("\r\n")
 
 
-def resolve_secret(value: str, mode: SecretsMode) -> str:
+def _resolve_secret(value: str, mode: SecretsMode) -> str:
     """Resolve a secret value based on the configured mode."""
     if mode == SecretsMode.INLINE:
         return value
@@ -65,7 +65,7 @@ class Dataset(BaseModel):
         return value
 
     def get_passphrase(self, mode: SecretsMode) -> str:  # noqa: D102
-        return resolve_secret(self.secret, mode)
+        return _resolve_secret(self.secret, mode)
 
 
 class Config(BaseModel):
