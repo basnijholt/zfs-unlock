@@ -64,14 +64,6 @@ class Dataset(BaseModel):
             raise ValueError(msg)
         return value
 
-    @property
-    def pool(self) -> str:  # noqa: D102
-        return self.path.split("/")[0]
-
-    @property
-    def name(self) -> str:  # noqa: D102
-        return "/".join(self.path.split("/")[1:])
-
     def get_passphrase(self, mode: SecretsMode) -> str:  # noqa: D102
         return resolve_secret(self.secret, mode)
 

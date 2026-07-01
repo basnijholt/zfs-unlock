@@ -8,7 +8,6 @@ from pathlib import Path
 DATASET_NAME_RE = re.compile(r"^[A-Za-z0-9_.:-]+(?:/[A-Za-z0-9_.:-]+)*$")
 COMMAND_TIMEOUT_RETURNCODE = 124
 COMMAND_STARTUP_ERROR_RETURNCODE = 127
-RECEIVER_UNLOCK_ARG_COUNT = 2
 
 CONFIG_SEARCH_PATHS = [
     Path("config.yaml"),

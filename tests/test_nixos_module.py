@@ -37,10 +37,6 @@ def run_nix_eval(expr: str, repo: Path | None = None) -> subprocess.CompletedPro
 
 def test_nixos_receiver_module_generates_restricted_receiver_config() -> None:
     """The flake exports a NixOS module that generates the receiver policy."""
-    nix = shutil.which("nix")
-    if nix is None:
-        pytest.skip("nix is not installed")
-
     repo = Path(__file__).resolve().parents[1]
     expr = f"""
       let
@@ -69,22 +65,7 @@ def test_nixos_receiver_module_generates_restricted_receiver_config() -> None:
         sudoUsers = builtins.map (rule: rule.users) eval.config.security.sudo.extraRules;
       }}
     """
-    result = subprocess.run(
-        [
-            nix,
-            "--extra-experimental-features",
-            "nix-command flakes",
-            "eval",
-            "--impure",
-            "--json",
-            "--expr",
-            expr,
-        ],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    result = run_nix_eval(expr, repo)
 
     assert result.returncode == 0, result.stderr
     data = json.loads(result.stdout)
@@ -101,10 +82,6 @@ def test_nixos_receiver_module_generates_restricted_receiver_config() -> None:
 
 def test_nixos_receiver_module_defaults_to_flake_python_package() -> None:
     """The flake module defaults to the packaged app, not a uv tool wrapper."""
-    nix = shutil.which("nix")
-    if nix is None:
-        pytest.skip("nix is not installed")
-
     repo = Path(__file__).resolve().parents[1]
     expr = f"""
       let
@@ -130,22 +107,7 @@ def test_nixos_receiver_module_defaults_to_flake_python_package() -> None:
         usesPackagedApp = eval.config.services.zfsUnlock.receiver.package.passthru.isZfsUnlockPackage or false;
       }}
     """
-    result = subprocess.run(
-        [
-            nix,
-            "--extra-experimental-features",
-            "nix-command flakes",
-            "eval",
-            "--impure",
-            "--json",
-            "--expr",
-            expr,
-        ],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    result = run_nix_eval(expr, repo)
 
     assert result.returncode == 0, result.stderr
     data = json.loads(result.stdout)
@@ -154,10 +116,6 @@ def test_nixos_receiver_module_defaults_to_flake_python_package() -> None:
 
 def test_nixos_receiver_module_enables_linger_by_default() -> None:
     """The receiver user keeps a stable user manager by default."""
-    nix = shutil.which("nix")
-    if nix is None:
-        pytest.skip("nix is not installed")
-
     repo = Path(__file__).resolve().parents[1]
     expr = f"""
       let
@@ -183,22 +141,7 @@ def test_nixos_receiver_module_enables_linger_by_default() -> None:
         linger = eval.config.users.users.zfs-unlock.linger or null;
       }}
     """
-    result = subprocess.run(
-        [
-            nix,
-            "--extra-experimental-features",
-            "nix-command flakes",
-            "eval",
-            "--impure",
-            "--json",
-            "--expr",
-            expr,
-        ],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    result = run_nix_eval(expr, repo)
 
     assert result.returncode == 0, result.stderr
     data = json.loads(result.stdout)
@@ -207,10 +150,6 @@ def test_nixos_receiver_module_enables_linger_by_default() -> None:
 
 def test_nixos_receiver_module_can_disable_linger() -> None:
     """Users can opt out of receiver user linger."""
-    nix = shutil.which("nix")
-    if nix is None:
-        pytest.skip("nix is not installed")
-
     repo = Path(__file__).resolve().parents[1]
     expr = f"""
       let
@@ -237,22 +176,7 @@ def test_nixos_receiver_module_can_disable_linger() -> None:
         linger = eval.config.users.users.zfs-unlock.linger or null;
       }}
     """
-    result = subprocess.run(
-        [
-            nix,
-            "--extra-experimental-features",
-            "nix-command flakes",
-            "eval",
-            "--impure",
-            "--json",
-            "--expr",
-            expr,
-        ],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    result = run_nix_eval(expr, repo)
 
     assert result.returncode == 0, result.stderr
     data = json.loads(result.stdout)
@@ -308,10 +232,6 @@ def test_nixos_receiver_module_rejects_unsafe_policy_strings(override: str, mess
 
 def test_nixos_client_module_generates_packaged_daemon_service() -> None:
     """The flake exports a NixOS client module for a packaged daemon."""
-    nix = shutil.which("nix")
-    if nix is None:
-        pytest.skip("nix is not installed")
-
     repo = Path(__file__).resolve().parents[1]
     expr = f"""
       let
@@ -348,22 +268,7 @@ def test_nixos_client_module_generates_packaged_daemon_service() -> None:
         path = builtins.map toString service.path;
       }}
     """
-    result = subprocess.run(
-        [
-            nix,
-            "--extra-experimental-features",
-            "nix-command flakes",
-            "eval",
-            "--impure",
-            "--json",
-            "--expr",
-            expr,
-        ],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    result = run_nix_eval(expr, repo)
 
     assert result.returncode == 0, result.stderr
     data = json.loads(result.stdout)
@@ -380,10 +285,6 @@ def test_nixos_client_module_generates_packaged_daemon_service() -> None:
 
 def test_nix_package_version_comes_from_committed_version_file() -> None:
     """The Nix package reports the release version instead of a 0.0.0 commit fallback."""
-    nix = shutil.which("nix")
-    if nix is None:
-        pytest.skip("nix is not installed")
-
     repo = Path(__file__).resolve().parents[1]
     expr = f"""
       let
@@ -394,22 +295,7 @@ def test_nix_package_version_comes_from_committed_version_file() -> None:
         actual = flake.packages.${{system}}.default.version;
       }}
     """
-    result = subprocess.run(
-        [
-            nix,
-            "--extra-experimental-features",
-            "nix-command flakes",
-            "eval",
-            "--impure",
-            "--json",
-            "--expr",
-            expr,
-        ],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    result = run_nix_eval(expr, repo)
 
     assert result.returncode == 0, result.stderr
     data = json.loads(result.stdout)
