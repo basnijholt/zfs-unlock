@@ -90,7 +90,7 @@ class ZfsUnlockClient:
         return True
 
 
-def filter_datasets(datasets: list[Dataset], filters: list[str] | None) -> list[Dataset]:
+def _filter_datasets(datasets: list[Dataset], filters: list[str] | None) -> list[Dataset]:
     """Filter datasets by path patterns."""
     if not filters:
         return datasets
@@ -98,7 +98,7 @@ def filter_datasets(datasets: list[Dataset], filters: list[str] | None) -> list[
 
 
 def _select_datasets(config: Config, filters: list[str] | None) -> list[Dataset] | None:
-    datasets = filter_datasets(config.datasets, filters)
+    datasets = _filter_datasets(config.datasets, filters)
     if not datasets:
         err_console.print("[yellow]No matching datasets found.[/yellow]")
         return None

@@ -14,7 +14,7 @@ from .config import find_config
 from .output import console, err_console
 from .process import run_process
 
-SYSTEMD_SERVICE = """\
+_SYSTEMD_SERVICE = """\
 [Unit]
 Description=ZFS Unlock
 After=network-online.target
@@ -30,7 +30,7 @@ RestartSec=10
 WantedBy=default.target
 """
 
-LAUNCHD_PLIST = """\
+_LAUNCHD_PLIST = """\
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" \
 "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -101,7 +101,7 @@ def _install_macos(uv_path: Path) -> None:
 
     log_dir.mkdir(parents=True, exist_ok=True)
     plist_dst.parent.mkdir(parents=True, exist_ok=True)
-    plist_dst.write_text(LAUNCHD_PLIST.format(uv_path=uv_path, home=Path.home(), log_dir=log_dir))
+    plist_dst.write_text(_LAUNCHD_PLIST.format(uv_path=uv_path, home=Path.home(), log_dir=log_dir))
     run_process(["launchctl", "load", str(plist_dst)])
 
     console.print("[green]OK[/green] Service installed and started")
@@ -117,7 +117,7 @@ def _install_linux(uv_path: Path) -> None:
 
     service_dir.mkdir(parents=True, exist_ok=True)
     current_path = os.environ.get("PATH", "/usr/bin:/bin")
-    service_dst.write_text(SYSTEMD_SERVICE.format(uv_path=uv_path, path=current_path))
+    service_dst.write_text(_SYSTEMD_SERVICE.format(uv_path=uv_path, path=current_path))
 
     run_process(["systemctl", "--user", "daemon-reload"])
     run_process(["systemctl", "--user", "enable", "--now", "zfs-unlock"])

@@ -36,7 +36,7 @@ app = typer.Typer(
 )
 
 
-def unlock(
+def _unlock(
     config_path: Annotated[Path | None, typer.Option("--config", "-c", help="Config file path")] = None,
     dry_run: Annotated[bool, typer.Option("--dry-run", "-n", help="Show what would be done")] = False,
     daemon: Annotated[bool, typer.Option("--daemon", "-d", help="Run continuously")] = False,
@@ -80,7 +80,7 @@ def unlock(
             raise typer.Exit(1)
 
 
-def lock(
+def _lock(
     config_path: Annotated[Path | None, typer.Option("--config", "-c", help="Config file path")] = None,
     force: Annotated[bool, typer.Option("--force", "-f", help="Force unmount before locking")] = False,
     dataset: Annotated[list[str] | None, typer.Option("--dataset", "-D", help="Filter by dataset path")] = None,
@@ -93,7 +93,7 @@ def lock(
         raise typer.Exit(1)
 
 
-def status(
+def _status(
     config_path: Annotated[Path | None, typer.Option("--config", "-c", help="Config file path")] = None,
     dataset: Annotated[list[str] | None, typer.Option("--dataset", "-D", help="Filter by dataset path")] = None,
 ) -> None:
@@ -105,7 +105,7 @@ def status(
         raise typer.Exit(1)
 
 
-def receiver(
+def _receiver(
     ctx: typer.Context,
     allow_file: Annotated[
         Path,
@@ -145,15 +145,16 @@ def receiver(
 
 def _register_top_level_commands() -> None:
     """Register top-level commands in the order shown by --help."""
-    app.command(rich_help_panel="Client Commands")(unlock)
-    app.command(rich_help_panel="Client Commands")(lock)
-    app.command(rich_help_panel="Client Commands")(status)
+    app.command("unlock", rich_help_panel="Client Commands")(_unlock)
+    app.command("lock", rich_help_panel="Client Commands")(_lock)
+    app.command("status", rich_help_panel="Client Commands")(_status)
     app.command(rich_help_panel="Client Commands")(doctor)
     app.command(rich_help_panel="Setup Commands")(keygen)
     app.command(
+        "receiver",
         context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
         rich_help_panel="Receiver Commands",
-    )(receiver)
+    )(_receiver)
     app.add_typer(service_app, name="service", rich_help_panel="Service Commands")
 
 
