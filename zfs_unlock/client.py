@@ -101,7 +101,11 @@ class ZfsUnlockClient:
         """Unlock a dataset by sending its passphrase to the receiver."""
         try:
             passphrase = dataset.get_passphrase(self.config.secrets)
-        except OSError as exc:
+        except (OSError, ValueError) as exc:
+            # OSError: unreadable/missing secret file. ValueError: a malformed
+            # secret path (e.g. an embedded null byte) that Path rejects before
+            # any OSError. Either way, fail this dataset instead of crashing the
+            # whole pass -- in daemon mode an unhandled error would kill the loop.
             err_console.print(f"[red]secret failed for {dataset.path}: {exc}[/red]")
             return False
 
