@@ -201,6 +201,26 @@ def test_cli_daemon_mode(tmp_path: Path) -> None:
     mock_sleep.assert_any_call(1)
 
 
+def test_cli_daemon_does_not_claim_restored_on_failed_pass(tmp_path: Path) -> None:
+    """Recovering reachability with a still-failing pass must not print success."""
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("host: test\ndatasets:\n  tank/ds: pass")
+
+    fake_run_unlock = MagicMock(return_value=object())
+    with (
+        patch("zfs_unlock.cli.run_unlock", new=fake_run_unlock),
+        patch("asyncio.run") as mock_run,
+        patch("time.sleep"),
+    ):
+        mock_run.side_effect = [UnlockOutcome.UNREACHABLE, UnlockOutcome.FAILED, KeyboardInterrupt]
+        result = runner.invoke(app, ["unlock", "--config", str(config_file), "--daemon"])
+
+    stdout = ANSI_RE.sub("", result.stdout)
+    assert result.exit_code == 0
+    assert "Connection restored" not in stdout
+    assert "reachable again, but the unlock pass failed" in stdout
+
+
 def test_cli_daemon_keeps_normal_interval_on_non_connection_failures(tmp_path: Path) -> None:
     """Persistent non-network failures must not hammer the receiver at 1s."""
     config_file = tmp_path / "config.yaml"

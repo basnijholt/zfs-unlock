@@ -63,8 +63,10 @@ def _unlock(
                         console.print("[yellow]Receiver unreachable. Switching to panic mode (1s interval).[/yellow]")
                     current_interval = 1
                 else:
-                    if not reachable:
+                    if not reachable and outcome is UnlockOutcome.OK:
                         console.print("[green]Connection restored.[/green]")
+                    elif not reachable:
+                        console.print("[yellow]Receiver reachable again, but the unlock pass failed.[/yellow]")
                     current_interval = interval
 
                 reachable = outcome is not UnlockOutcome.UNREACHABLE

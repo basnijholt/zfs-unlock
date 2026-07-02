@@ -149,6 +149,8 @@ async def _lock_statuses(
         *[client.is_locked(dataset, quiet=quiet) for dataset in datasets],
         return_exceptions=True,
     )
+    # Exceptions (e.g. cancellation during shutdown) deliberately do NOT count
+    # as connection errors: a cancelled pass must never trip panic-mode polling.
     return [DatasetStatus(locked=None) if isinstance(status, BaseException) else status for status in statuses]
 
 
