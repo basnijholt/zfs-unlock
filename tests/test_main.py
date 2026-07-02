@@ -280,6 +280,21 @@ def test_receiver_unlock_rejects_subtree_listing_outside_target(tmp_path: Path) 
     assert len(runner.calls) == 3  # noqa: PLR2004
 
 
+def test_receiver_unlock_rejects_empty_passphrase(tmp_path: Path) -> None:
+    """Receiver refuses to run load-key when stdin carried no passphrase."""
+    allow_file = write_allowlist(tmp_path, "tank/photos")
+    runner = RecordingLocalRunner(CommandResult(returncode=0, stdout="unavailable\n", stderr=""))
+    receiver = Receiver(allow_file=allow_file, runner=runner)
+
+    response = handle_request(receiver, "unlock", "tank/photos", stdin_text="")
+
+    assert response.returncode == 1
+    assert "missing passphrase on stdin" in response.stderr
+    assert runner.calls == [
+        (["zfs", "get", "-H", "-o", "value", "keystatus", "tank/photos"], None),
+    ]
+
+
 def test_receiver_unlock_skips_already_available_key(tmp_path: Path) -> None:
     """Receiver does not re-load an already available key."""
     allow_file = write_allowlist(tmp_path, "tank/photos")
