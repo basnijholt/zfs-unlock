@@ -11,7 +11,7 @@ from typing import Annotated
 
 import typer
 
-from .client import run_lock, run_status, run_unlock
+from .client import UnlockOutcome, run_lock, run_status, run_unlock
 from .config import load_config
 from .diagnostics import doctor
 from .keygen import keygen
@@ -53,30 +53,30 @@ def _unlock(
     if daemon:
         console.print(f"[bold]Running with smart polling (interval: {interval}s)[/bold]")
         current_interval = interval
-        last_success = True
+        reachable = True
 
         while True:
             try:
-                success = asyncio.run(run_unlock(config, dry_run=dry_run, quiet=True, dataset_filters=dataset))
-                if success:
-                    if not last_success:
-                        console.print("[green]Connection restored.[/green]")
-                    current_interval = interval
-                else:
-                    if last_success:
-                        console.print(
-                            "[yellow]Connection lost/unstable. Switching to panic mode (1s interval).[/yellow]",
-                        )
+                outcome = asyncio.run(run_unlock(config, dry_run=dry_run, quiet=True, dataset_filters=dataset))
+                if outcome is UnlockOutcome.UNREACHABLE:
+                    if reachable:
+                        console.print("[yellow]Receiver unreachable. Switching to panic mode (1s interval).[/yellow]")
                     current_interval = 1
+                else:
+                    if not reachable and outcome is UnlockOutcome.OK:
+                        console.print("[green]Connection restored.[/green]")
+                    elif not reachable:
+                        console.print("[yellow]Receiver reachable again, but the unlock pass failed.[/yellow]")
+                    current_interval = interval
 
-                last_success = success
+                reachable = outcome is not UnlockOutcome.UNREACHABLE
                 time.sleep(current_interval)
             except KeyboardInterrupt:
                 console.print("\n[bold]Stopped[/bold]")
                 break
     else:
-        success = asyncio.run(run_unlock(config, dry_run=dry_run, dataset_filters=dataset))
-        if not success:
+        outcome = asyncio.run(run_unlock(config, dry_run=dry_run, dataset_filters=dataset))
+        if outcome is not UnlockOutcome.OK:
             raise typer.Exit(1)
 
 
