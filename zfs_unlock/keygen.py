@@ -34,7 +34,7 @@ def keygen(
         err_console.print(f"[red]Refusing to overwrite existing key: {identity_path}[/red]")
         raise typer.Exit(1)
 
-    identity_path.parent.mkdir(parents=True, exist_ok=True)
+    identity_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     try:
         run_process([ssh_keygen, "-t", "ed25519", "-N", "", "-C", comment, "-f", str(identity_path)])
     except subprocess.CalledProcessError as exc:

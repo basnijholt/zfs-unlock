@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -805,6 +806,28 @@ def test_keygen_creates_unlock_key(tmp_path: Path) -> None:
     assert "ssh-ed25519 AAAATEST zfs-unlock" in result.stdout
     assert key_path.exists()
     assert Path(f"{key_path}.pub").exists()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX directory permissions")
+def test_keygen_creates_key_dir_privately(tmp_path: Path) -> None:
+    """A freshly created key directory is private, never group/other readable."""
+    key_dir = tmp_path / "dot-ssh"
+    key_path = key_dir / "zfs-unlock-receiver"
+
+    def fake_run(cmd: list[str], *, check: bool = True) -> MagicMock:  # noqa: ARG001
+        key_path.write_text("private")
+        Path(f"{key_path}.pub").write_text("ssh-ed25519 AAAATEST zfs-unlock\n")
+        return MagicMock(stdout="", stderr="", returncode=0)
+
+    with (
+        patch("shutil.which", return_value="/usr/bin/ssh-keygen"),
+        patch("zfs_unlock.keygen.run_process", side_effect=fake_run),
+    ):
+        result = runner.invoke(app, ["keygen", "--identity-file", str(key_path)])
+
+    assert result.exit_code == 0
+    assert key_dir.is_dir()
+    assert key_dir.stat().st_mode & 0o077 == 0
 
 
 def test_keygen_reports_ssh_keygen_failure(tmp_path: Path) -> None:
