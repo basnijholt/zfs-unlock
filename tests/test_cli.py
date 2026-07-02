@@ -1042,7 +1042,8 @@ def test_keygen_failure_falls_back_to_stdout_detail(tmp_path: Path) -> None:
     ):
         result = runner.invoke(app, ["keygen", "--identity-file", str(key_path)])
 
-    output = ANSI_RE.sub("", result.output)
+    # Collapse whitespace: rich wraps long lines at the terminal width.
+    output = " ".join(ANSI_RE.sub("", result.output).split())
     assert result.exit_code == 1
     assert "ssh-keygen failed" in output
     assert "already exists" in output
