@@ -83,6 +83,38 @@ def test_receiver_rejects_dataset_not_in_allowlist(tmp_path: Path) -> None:
     assert runner.calls == []
 
 
+def test_receiver_missing_allow_file_rejects_all_datasets(tmp_path: Path) -> None:
+    """A missing allowlist file fails closed and rejects every dataset."""
+    runner = RecordingLocalRunner()
+    receiver = Receiver(allow_file=tmp_path / "missing-allowed-datasets", runner=runner)
+
+    response = receiver.parse(["status", "tank/photos"])
+
+    assert isinstance(response, CommandResult)
+    assert response.returncode == 1
+    assert "not allowed" in response.stderr
+    assert runner.calls == []
+
+
+def test_receiver_allowlist_skips_comments_and_blank_lines(tmp_path: Path) -> None:
+    """Allowlist parsing skips comments and blank lines and strips whitespace."""
+    allow_file = tmp_path / "allowed-datasets"
+    allow_file.write_text("# comment\ntank/photos\n\n   \n  tank/media  \n# tank/secret\n")
+    runner = RecordingLocalRunner()
+    receiver = Receiver(allow_file=allow_file, runner=runner)
+
+    assert receiver._allowed_datasets == frozenset({"tank/photos", "tank/media"})  # noqa: SLF001
+    assert isinstance(receiver.parse(["status", "tank/photos"]), _ReceiverRequest)
+    assert isinstance(receiver.parse(["status", "tank/media"]), _ReceiverRequest)
+
+    response = receiver.parse(["status", "tank/secret"])
+
+    assert isinstance(response, CommandResult)
+    assert response.returncode == 1
+    assert "not allowed" in response.stderr
+    assert runner.calls == []
+
+
 def test_receiver_status_maps_keystatus(tmp_path: Path) -> None:
     """Receiver maps ZFS keystatus values to client status words."""
     allow_file = write_allowlist(tmp_path, "tank/photos")
