@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import pytest
+
 from zfs_unlock.config import is_safe_dataset_name
 from zfs_unlock.process import CommandResult
-from zfs_unlock.receiver import Receiver, _ReceiverRequest, parse_receiver_command
+from zfs_unlock.receiver import Receiver, _ReceiverAction, _ReceiverRequest, parse_receiver_command
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -78,6 +80,52 @@ def test_receiver_rejects_dataset_not_in_allowlist(tmp_path: Path) -> None:
     response = receiver.parse(["status", "tank/media"])
 
     assert isinstance(response, CommandResult)
+    assert response.returncode == 1
+    assert "not allowed" in response.stderr
+    assert runner.calls == []
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["unlock", "tank/media"],
+        ["lock", "tank/media"],
+        ["lock", "tank/media", "--force"],
+    ],
+)
+def test_receiver_parse_rejects_unlock_and_lock_dataset_not_in_allowlist(tmp_path: Path, args: list[str]) -> None:
+    """Parsing refuses unlock/lock requests for datasets that are not allowlisted."""
+    allow_file = write_allowlist(tmp_path, "tank/photos")
+    runner = RecordingLocalRunner()
+    receiver = Receiver(allow_file=allow_file, runner=runner)
+
+    response = receiver.parse(args)
+
+    assert isinstance(response, CommandResult)
+    assert response.returncode == 1
+    assert "not allowed" in response.stderr
+    assert runner.calls == []
+
+
+@pytest.mark.parametrize(
+    "request_",
+    [
+        _ReceiverRequest(action=_ReceiverAction.UNLOCK, dataset="tank/media"),
+        _ReceiverRequest(action=_ReceiverAction.LOCK, dataset="tank/media"),
+        _ReceiverRequest(action=_ReceiverAction.LOCK, dataset="tank/media", force=True),
+    ],
+)
+def test_receiver_handle_revalidates_forged_request_against_allowlist(
+    tmp_path: Path,
+    request_: _ReceiverRequest,
+) -> None:
+    """Handling re-checks the allowlist even for requests that bypassed parse validation."""
+    allow_file = write_allowlist(tmp_path, "tank/photos")
+    runner = RecordingLocalRunner()
+    receiver = Receiver(allow_file=allow_file, runner=runner)
+
+    response = receiver.handle(request_, stdin_text="secret-pass\n")
+
     assert response.returncode == 1
     assert "not allowed" in response.stderr
     assert runner.calls == []
