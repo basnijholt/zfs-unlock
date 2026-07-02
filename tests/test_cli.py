@@ -13,7 +13,7 @@ import typer
 from typer.testing import CliRunner
 
 from zfs_unlock.cli import _read_stdin_limited, _receiver, app
-from zfs_unlock.client import UnlockOutcome, _filter_datasets
+from zfs_unlock.client import UnlockOutcome, filter_datasets
 from zfs_unlock.config import Dataset, find_config
 from zfs_unlock.constants import MAX_PASSPHRASE_BYTES
 
@@ -40,20 +40,52 @@ class TestFilterDatasets:
             Dataset(path="tank/syncthing", secret="pass2"),
         ]
 
-        assert _filter_datasets(datasets, None) == datasets
+        assert filter_datasets(datasets, None) == datasets
 
-    def test_single_filter_partial_match(self) -> None:
-        """Single filter matches partial path."""
+    def test_exact_filter_matches_single_dataset(self) -> None:
+        """An exact path selects only that dataset, never substring matches."""
         datasets = [
             Dataset(path="tank/photos", secret="pass1"),
-            Dataset(path="tank/syncthing", secret="pass2"),
+            Dataset(path="tank/photos-old", secret="pass2"),
             Dataset(path="tank/frigate", secret="pass3"),
         ]
 
-        result = _filter_datasets(datasets, ["photos"])
+        result = filter_datasets(datasets, ["tank/photos"])
 
-        assert len(result) == 1
-        assert result[0].path == "tank/photos"
+        assert [ds.path for ds in result] == ["tank/photos"]
+
+    def test_substring_filter_matches_nothing(self) -> None:
+        """A bare substring no longer selects datasets."""
+        datasets = [
+            Dataset(path="tank/photos", secret="pass1"),
+            Dataset(path="tank/syncthing", secret="pass2"),
+        ]
+
+        assert filter_datasets(datasets, ["photos"]) == []
+
+    def test_glob_filter_matches_multiple_datasets(self) -> None:
+        """Globs opt into matching several datasets."""
+        datasets = [
+            Dataset(path="tank/photos", secret="pass1"),
+            Dataset(path="tank/photos-old", secret="pass2"),
+            Dataset(path="ssd/frigate", secret="pass3"),
+        ]
+
+        result = filter_datasets(datasets, ["tank/*"])
+
+        assert [ds.path for ds in result] == ["tank/photos", "tank/photos-old"]
+
+    def test_glob_star_matches_across_path_separators(self) -> None:
+        """Documented semantic: `*` also crosses `/`, selecting nested children."""
+        datasets = [
+            Dataset(path="tank/photos", secret="pass1"),
+            Dataset(path="tank/photos/raw", secret="pass2"),
+            Dataset(path="ssd/frigate", secret="pass3"),
+        ]
+
+        result = filter_datasets(datasets, ["tank/*"])
+
+        assert [ds.path for ds in result] == ["tank/photos", "tank/photos/raw"]
 
 
 class TestFindConfig:
@@ -613,6 +645,51 @@ def test_doctor_checks_all_configured_datasets(tmp_path: Path) -> None:
     ]
     assert "checking receiver status: tank/one" in result.stdout
     assert "checking receiver status: tank/two" in result.stdout
+
+
+def test_doctor_accepts_multiple_dataset_filters(tmp_path: Path) -> None:
+    """Doctor accepts repeated -D options like the other commands."""
+    config_file = tmp_path / "config.yaml"
+    key = write_private_file(tmp_path / "zfs-unlock-receiver")
+    config_file.write_text(
+        f"host: 192.0.2.1\nidentity_file: {key}\ndatasets:\n  tank/one: pass\n  tank/two: pass\n  ssd/three: pass",
+    )
+
+    with (
+        patch("socket.getaddrinfo", return_value=[object()]),
+        patch("socket.create_connection") as create_connection,
+        patch("zfs_unlock.diagnostics.ZfsUnlockClient") as client_cls,
+    ):
+        create_connection.return_value.__enter__.return_value = object()
+        client_cls.return_value.run_remote = AsyncMock(
+            side_effect=[
+                MagicMock(returncode=0, stdout="locked\n", stderr=""),
+                MagicMock(returncode=0, stdout="unlocked\n", stderr=""),
+            ],
+        )
+        result = runner.invoke(
+            app,
+            ["doctor", "--config", str(config_file), "-D", "tank/one", "-D", "ssd/three"],
+        )
+
+    assert result.exit_code == 0
+    assert client_cls.return_value.run_remote.call_args_list == [
+        ((["status", "tank/one"],),),
+        ((["status", "ssd/three"],),),
+    ]
+
+
+def test_doctor_reports_unmatched_dataset_filter(tmp_path: Path) -> None:
+    """An unmatched -D pattern fails with wording that fits globs too."""
+    config_file = tmp_path / "config.yaml"
+    key = write_private_file(tmp_path / "zfs-unlock-receiver")
+    config_file.write_text(f"host: 192.0.2.1\nidentity_file: {key}\ndatasets:\n  tank/one: pass")
+
+    result = runner.invoke(app, ["doctor", "--config", str(config_file), "-D", "tank/nope*"])
+
+    stdout = ANSI_RE.sub("", result.output)
+    assert result.exit_code == 1
+    assert "no configured datasets match: tank/nope*" in stdout
 
 
 def test_doctor_fails_unknown_receiver_status(tmp_path: Path) -> None:

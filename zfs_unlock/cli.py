@@ -46,7 +46,7 @@ def _unlock(
         int,
         typer.Option("--interval", "-i", min=1, help="Seconds between checks (1s if unreachable)"),
     ] = 30,
-    dataset: Annotated[list[str] | None, typer.Option("--dataset", "-D", help="Filter by dataset path")] = None,
+    dataset: Annotated[list[str] | None, typer.Option("--dataset", "-D", help="Dataset path or glob to select")] = None,
 ) -> None:
     """Unlock configured datasets."""
     config_path, config = load_config(config_path)
@@ -85,7 +85,7 @@ def _unlock(
 def _lock(
     config_path: Annotated[Path | None, typer.Option("--config", "-c", help="Config file path")] = None,
     force: Annotated[bool, typer.Option("--force", "-f", help="Force unmount before locking")] = False,
-    dataset: Annotated[list[str] | None, typer.Option("--dataset", "-D", help="Filter by dataset path")] = None,
+    dataset: Annotated[list[str] | None, typer.Option("--dataset", "-D", help="Dataset path or glob to select")] = None,
 ) -> None:
     """Lock configured datasets."""
     config_path, config = load_config(config_path)
@@ -97,7 +97,7 @@ def _lock(
 
 def _status(
     config_path: Annotated[Path | None, typer.Option("--config", "-c", help="Config file path")] = None,
-    dataset: Annotated[list[str] | None, typer.Option("--dataset", "-D", help="Filter by dataset path")] = None,
+    dataset: Annotated[list[str] | None, typer.Option("--dataset", "-D", help="Dataset path or glob to select")] = None,
 ) -> None:
     """Show lock status of configured datasets."""
     config_path, config = load_config(config_path)

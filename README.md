@@ -199,6 +199,9 @@ zfs-unlock lock -D tank/photos
 zfs-unlock lock --force -D tank/photos
 ```
 
+`-D` selects datasets by exact path or glob (for example `-D 'tank/*'`); it never matches substrings.
+Unlike shell globs, `*` also matches across `/`: `tank/*` selects every configured dataset under `tank`, nested children included.
+
 `zfs-unlock lock` can fail with `Key unload error: '<dataset>' is busy` when a service still has files open on that dataset.
 Stop the service first, or use `--force` when you intentionally want to unmount the dataset and disrupt those processes.
 Even with `--force`, OpenZFS can refuse to unmount a dataset that is still held by NFS, SMB, client mounts, or kernel users.
