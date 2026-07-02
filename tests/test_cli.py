@@ -1225,9 +1225,11 @@ def test_service_install_macos_pins_current_executable(
         result = runner.invoke(app, ["service", "install"])
 
     assert result.exit_code == 0
-    plist = (tmp_path / "Library" / "LaunchAgents" / "com.zfs_unlock.plist").read_text()
+    plist = (tmp_path / "Library" / "LaunchAgents" / "lt.nijho.zfs-unlock.plist").read_text()
+    assert "<string>lt.nijho.zfs-unlock</string>" in plist
     assert "    <string>/usr/local/bin/zfs-unlock</string>\n    <string>unlock</string>" in plist
-    assert "tool" not in plist
+    assert "<key>SuccessfulExit</key>" in plist
+    assert "tool run" not in plist
 
 
 def test_service_install_falls_back_to_uv_with_warning(
@@ -1272,3 +1274,38 @@ def test_service_status_linux() -> None:
     assert result.exit_code == 0
     assert "Service is running" in result.stdout
     mock_run.assert_called_once_with(["systemctl", "--user", "is-active", "zfs-unlock"], check=False)
+
+
+def test_read_passphrase_newline_does_not_count_against_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The client's single trailing newline is a terminator, not passphrase bytes."""
+    limit = 1024
+    _set_stdin_bytes(monkeypatch, b"x" * limit + b"\n")
+    assert _read_passphrase(limit) == "x" * limit + "\n"
+
+
+def test_read_passphrase_rejects_over_limit_even_with_newline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reject limit + 1 passphrase bytes regardless of the terminator."""
+    limit = 1024
+    _set_stdin_bytes(monkeypatch, b"x" * (limit + 1) + b"\n")
+    assert _read_passphrase(limit) is None
+    _set_stdin_bytes(monkeypatch, b"x" * limit + b"\n\n")
+    assert _read_passphrase(limit) is None
+
+
+def test_cli_unlock_rejects_filter_matching_nothing(tmp_path: Path) -> None:
+    """A -D filter that matches nothing fails fast instead of running (or looping)."""
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("host: zfs-host.example.lan\ndatasets:\n  tank/photos: pass\n")
+
+    result = runner.invoke(app, ["unlock", "--config", str(config_file), "-D", "tank/typo"])
+
+    assert result.exit_code == 1
+    assert "No configured datasets match" in result.stderr
+
+    daemon_result = runner.invoke(
+        app,
+        ["unlock", "--config", str(config_file), "--daemon", "-D", "tank/typo"],
+    )
+
+    assert daemon_result.exit_code == 1
+    assert "No configured datasets match" in daemon_result.stderr

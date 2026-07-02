@@ -46,28 +46,34 @@ RestartSec=10
 WantedBy=default.target
 """
 
-_LAUNCHD_PLIST = """\
+# Reverse-DNS of the project domain (zfs-unlock.nijho.lt).
+_LAUNCHD_LABEL = "lt.nijho.zfs-unlock"
+
+_LAUNCHD_PLIST = f"""\
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" \
 "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.zfs_unlock</string>
+  <string>{_LAUNCHD_LABEL}</string>
   <key>ProgramArguments</key>
   <array>
-{program_arguments}
+{{program_arguments}}
   </array>
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
-  <true/>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
   <key>WorkingDirectory</key>
-  <string>{home}</string>
+  <string>{{home}}</string>
   <key>StandardOutPath</key>
-  <string>{log_dir}/zfs-unlock.out</string>
+  <string>{{log_dir}}/zfs-unlock.out</string>
   <key>StandardErrorPath</key>
-  <string>{log_dir}/zfs-unlock.err</string>
+  <string>{{log_dir}}/zfs-unlock.err</string>
 </dict>
 </plist>
 """
@@ -121,7 +127,7 @@ def service_install() -> None:
 
 def _install_macos(argv: list[str]) -> None:
     """Install launchd service on macOS."""
-    plist_name = "com.zfs_unlock.plist"
+    plist_name = f"{_LAUNCHD_LABEL}.plist"
     plist_dst = Path.home() / "Library" / "LaunchAgents" / plist_name
     log_dir = Path.home() / "Library" / "Logs" / "zfs-unlock"
 
@@ -143,8 +149,13 @@ def _install_linux(argv: list[str]) -> None:
     service_dst = service_dir / service_name
 
     service_dir.mkdir(parents=True, exist_ok=True)
-    current_path = os.environ.get("PATH", "/usr/bin:/bin")
-    service_dst.write_text(_SYSTEMD_SERVICE.format(exec_start=shlex.join(argv), path=current_path))
+    # Not the installer's PATH verbatim: installing from a transient shell
+    # (uv venv, nix shell, devbox) would bake in directories that no longer
+    # exist at boot. The resolved executable's directory plus the standard
+    # system paths is enough for the daemon and the ssh it spawns.
+    exe_dir = str(Path(argv[0]).parent)
+    unit_path = ":".join(dict.fromkeys([exe_dir, "/usr/local/bin", "/usr/bin", "/bin"]))
+    service_dst.write_text(_SYSTEMD_SERVICE.format(exec_start=shlex.join(argv), path=unit_path))
 
     _run_or_exit(["systemctl", "--user", "daemon-reload"])
     _run_or_exit(["systemctl", "--user", "enable", "--now", "zfs-unlock"])
@@ -170,7 +181,7 @@ def service_uninstall() -> None:
 
 def _uninstall_macos() -> None:
     """Uninstall launchd service on macOS."""
-    plist_dst = Path.home() / "Library" / "LaunchAgents" / "com.zfs_unlock.plist"
+    plist_dst = Path.home() / "Library" / "LaunchAgents" / f"{_LAUNCHD_LABEL}.plist"
     if not plist_dst.exists():
         console.print("Service not installed.")
         return
@@ -200,7 +211,7 @@ def service_status() -> None:
     system = platform.system()
     if system == "Darwin":
         result = run_process(["launchctl", "list"], check=False)
-        if "com.zfs_unlock" in result.stdout:
+        if _LAUNCHD_LABEL in result.stdout:
             console.print("[green]ACTIVE[/green] Service is running")
         else:
             console.print("[dim]INACTIVE[/dim] Service is not running")

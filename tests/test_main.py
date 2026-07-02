@@ -392,9 +392,13 @@ def test_receiver_unlock_rejects_empty_passphrase(tmp_path: Path) -> None:
 
 
 def test_receiver_unlock_skips_already_available_key(tmp_path: Path) -> None:
-    """Receiver does not re-load an already available key."""
+    """Receiver does not re-load an already available key, but reconciles mounts."""
     allow_file = write_allowlist(tmp_path, "tank/photos")
-    runner = RecordingLocalRunner(CommandResult(returncode=0, stdout="available\n", stderr=""))
+    runner = RecordingLocalRunner(
+        CommandResult(returncode=0, stdout="available\n", stderr=""),
+        CommandResult(returncode=0, stdout="tank/photos\ton\tno\tavailable\n", stderr=""),
+        CommandResult(returncode=0, stdout="", stderr=""),
+    )
     receiver = Receiver(allow_file=allow_file, runner=runner)
 
     response = handle_request(receiver, "unlock", "tank/photos", stdin_text="secret-pass\n")
@@ -403,6 +407,8 @@ def test_receiver_unlock_skips_already_available_key(tmp_path: Path) -> None:
     assert response.stdout == "already unlocked tank/photos\n"
     assert runner.calls == [
         (["zfs", "get", "-H", "-o", "value", "keystatus", "tank/photos"], None),
+        (["zfs", "list", "-H", "-o", "name,canmount,mounted,keystatus", "-r", "tank/photos"], None),
+        (["zfs", "mount", "tank/photos"], None),
     ]
 
 
@@ -463,3 +469,62 @@ def test_receiver_lock_force_rejects_unrelated_mounted_dataset(tmp_path: Path) -
     assert runner.calls == [
         (["zfs", "list", "-H", "-o", "name,mounted", "-r", "tank/photos"], None),
     ]
+
+
+def test_receiver_status_reports_unlocked_unmounted(tmp_path: Path) -> None:
+    """Status distinguishes unlocked-but-unmounted so the client can remount."""
+    allow_file = write_allowlist(tmp_path, "tank/photos")
+    runner = RecordingLocalRunner(
+        CommandResult(returncode=0, stdout="available\n", stderr=""),
+        CommandResult(returncode=0, stdout="tank/photos\ton\tno\tavailable\n", stderr=""),
+    )
+    receiver = Receiver(allow_file=allow_file, runner=runner)
+
+    response = handle_request(receiver, "status", "tank/photos")
+
+    assert response.returncode == 0
+    assert response.stdout == "unlocked-unmounted\n"
+
+
+def test_receiver_status_reports_unlocked_when_fully_mounted(tmp_path: Path) -> None:
+    """A fully mounted unlocked subtree reports plain unlocked."""
+    allow_file = write_allowlist(tmp_path, "tank/photos")
+    runner = RecordingLocalRunner(
+        CommandResult(returncode=0, stdout="available\n", stderr=""),
+        CommandResult(returncode=0, stdout="tank/photos\ton\tyes\tavailable\n", stderr=""),
+    )
+    receiver = Receiver(allow_file=allow_file, runner=runner)
+
+    response = handle_request(receiver, "status", "tank/photos")
+
+    assert response.returncode == 0
+    assert response.stdout == "unlocked\n"
+
+
+def test_receiver_unlock_does_not_forward_load_key_stderr(tmp_path: Path) -> None:
+    """load-key stderr never reaches the SSH client; it could echo key material."""
+    allow_file = write_allowlist(tmp_path, "tank/photos")
+    runner = RecordingLocalRunner(
+        CommandResult(returncode=0, stdout="unavailable\n", stderr=""),
+        CommandResult(returncode=1, stdout="", stderr="Incorrect key for secret-pass\n"),
+    )
+    receiver = Receiver(allow_file=allow_file, runner=runner)
+
+    response = handle_request(receiver, "unlock", "tank/photos", stdin_text="secret-pass\n")
+
+    assert response.returncode == 1
+    assert "secret-pass" not in response.stderr
+    assert response.stderr == "load-key failed for tank/photos (exit 1)\n"
+
+
+def test_receiver_allowlist_with_only_comments_rejects_all(tmp_path: Path) -> None:
+    """An allowlist holding only comments and blanks allows nothing."""
+    allow_file = tmp_path / "allowed-datasets"
+    allow_file.write_text("# nothing enabled yet\n\n   \n# tank/photos\n")
+    receiver = Receiver(allow_file=allow_file, runner=RecordingLocalRunner())
+
+    response = receiver.parse(["status", "tank/photos"])
+
+    assert isinstance(response, CommandResult)
+    assert response.returncode == 1
+    assert "dataset not allowed" in response.stderr

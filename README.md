@@ -71,6 +71,7 @@ Two limits of that model are worth stating plainly:
 - [Usage](#usage)
 - [CLI](#cli)
 - [Running as a Service](#running-as-a-service)
+- [Stability](#stability)
 - [Development](#development)
 - [Credits](#credits)
 - [License](#license)
@@ -145,7 +146,7 @@ Then configure only the receiver policy on the ZFS host:
 
 ```nix
 {
-  services.zfsUnlock.receiver = {
+  services.zfs-unlock.receiver = {
     enable = true;
     allowedFrom = [ "192.168.1.50" ];
     authorizedKeys = [
@@ -163,7 +164,7 @@ The module creates the `zfs-unlock` SSH user, forced command, sudo rule, receive
 The receiver still checks each requested dataset against that allowlist.
 By default the module also enables systemd linger for the receiver user.
 That keeps the receiver user's systemd user manager stable across short-lived forced-command SSH sessions and avoids NixOS switch-time D-Bus races after the receiver account has been used.
-Set `services.zfsUnlock.receiver.enableLinger = false` if you do not want the module to manage linger for that user.
+Set `services.zfs-unlock.receiver.enableLinger = false` if you do not want the module to manage linger for that user.
 
 On a NixOS unlock device, include the client module and enable the daemon:
 
@@ -173,7 +174,7 @@ On a NixOS unlock device, include the client module and enable the daemon:
     zfs-unlock.nixosModules.client
   ];
 
-  services.zfsUnlock.client = {
+  services.zfs-unlock.client = {
     enable = true;
     user = "alice";
     group = "users";
@@ -281,7 +282,7 @@ zfs-unlock --help
 
 ## Running as a Service
 
-On NixOS, prefer the `services.zfsUnlock.client` module shown above.
+On NixOS, prefer the `services.zfs-unlock.client` module shown above.
 The portable CLI installer auto-detects Linux (systemd) or macOS (launchd) and pins the service to the `zfs-unlock` executable currently on `PATH`, so the daemon always runs the same version you installed.
 If `zfs-unlock` is not on `PATH`, it falls back to launching the latest release through [uv](https://docs.astral.sh/uv/).
 
@@ -298,6 +299,18 @@ zfs-unlock service logs
 # Uninstall
 zfs-unlock service uninstall
 ```
+
+## Stability
+
+As of v1.0.0 these interfaces are stable and only change with a major version bump:
+
+- the CLI commands (`unlock`, `lock`, `status`, `doctor`, `keygen`, `receiver`, `service`) and their documented flags, including the exact-or-glob `-D` selection semantics
+- the config file keys and their meaning (`host`, `user`, `port`, `identity_file`, `connect_timeout`, `command_timeout`, `secrets`, `datasets`)
+- the receiver wire protocol: `status <dataset>`, `unlock <dataset>` (passphrase on stdin), `lock <dataset> [--force]`, passed via `SSH_ORIGINAL_COMMAND` and parsed as shell words. Changes are strictly additive — new verbs or status strings may appear, existing ones keep their argv shape — so a v1 client always works against a newer receiver
+- the NixOS module option paths under `services.zfs-unlock.receiver` and `services.zfs-unlock.client`
+- the allowlist format of `/etc/zfs-unlock/allowed-datasets` (one dataset per line, `#` comments)
+
+The internal Python API (`zfs_unlock.*` modules) is not a stable interface.
 
 ## Development
 

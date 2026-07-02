@@ -11,12 +11,12 @@ from typing import Annotated, TypeVar
 
 import typer
 
-from .client import UnlockOutcome, run_lock, run_status, run_unlock
+from .client import UnlockOutcome, filter_datasets, run_lock, run_status, run_unlock
 from .config import Config, load_config
 from .constants import MAX_PASSPHRASE_BYTES, PANIC_INTERVAL_SECONDS, PANIC_MODE_MAX_SECONDS
 from .diagnostics import doctor
 from .keygen import keygen
-from .output import console
+from .output import console, err_console
 from .process import CommandResult
 from .receiver import Receiver, parse_receiver_command
 from .service import service_app
@@ -82,6 +82,12 @@ def _unlock(
     """Unlock configured datasets."""
     config_path, config = load_config(config_path)
     console.print(f"[dim]{config_path}[/dim]")
+
+    # Validate the filter up front: in daemon mode a typo like `-D tank/typo`
+    # would otherwise print "No matching datasets found" every interval forever.
+    if dataset and not filter_datasets(config.datasets, dataset):
+        err_console.print(f"[red]No configured datasets match: {', '.join(dataset)}[/red]")
+        raise typer.Exit(1)
 
     if daemon:
         console.print(f"[bold]Running with smart polling (interval: {interval}s)[/bold]")
@@ -170,12 +176,14 @@ def _read_passphrase(limit: int) -> str | None:
     """Read a passphrase from stdin, capped at `limit` bytes.
 
     The receiver runs as root behind an SSH forced command, so cap the read
-    rather than pulling unbounded input into memory. Returns None when the cap
-    is exceeded or the bytes are not valid UTF-8 (a lenient decode would hand
-    ``zfs load-key`` a silently corrupted passphrase).
+    rather than pulling unbounded input into memory. The client terminates the
+    passphrase with a single newline, which does not count against the limit —
+    a passphrase of exactly `limit` bytes is accepted. Returns None when the
+    cap is exceeded or the bytes are not valid UTF-8 (a lenient decode would
+    hand ``zfs load-key`` a silently corrupted passphrase).
     """
-    data = sys.stdin.buffer.read(limit + 1)
-    if len(data) > limit:
+    data = sys.stdin.buffer.read(limit + 2)
+    if len(data.removesuffix(b"\n")) > limit:
         return None
     try:
         return data.decode()
@@ -231,7 +239,7 @@ def _receiver(
             response = CommandResult(
                 returncode=1,
                 stdout="",
-                stderr=f"refusing passphrase: stdin exceeded {MAX_PASSPHRASE_BYTES} bytes or was not valid UTF-8\n",
+                stderr=f"refusing passphrase: longer than {MAX_PASSPHRASE_BYTES} bytes or not valid UTF-8\n",
             )
         else:
             response = receiver_instance.handle(request, stdin_text=stdin_text)

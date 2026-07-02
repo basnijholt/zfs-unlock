@@ -1,4 +1,42 @@
 ---
+name-template: "v$RESOLVED_VERSION"
+tag-template: "v$RESOLVED_VERSION"
+categories:
+  - title: "🔒 Security"
+    labels: ["security"]
+  - title: "🚀 Features"
+    labels: ["feature", "enhancement"]
+  - title: "🐛 Bug Fixes"
+    labels: ["fix", "bug", "bugfix"]
+  - title: "❄️ Nix"
+    labels: ["nix"]
+  - title: "🧰 CI & Maintenance"
+    labels: ["ci", "chore", "dependencies"]
+  - title: "📚 Documentation"
+    labels: ["documentation", "docs"]
+change-template: "- $TITLE (#$NUMBER) @$AUTHOR"
+change-title-escapes: '\<*_&'
+version-resolver:
+  major:
+    labels: ["major", "breaking"]
+  minor:
+    labels: ["minor", "feature", "enhancement"]
+  patch:
+    labels: ["patch", "fix", "bug", "bugfix", "ci", "chore", "dependencies", "documentation", "docs", "security", "nix"]
+  default: patch
+autolabeler:
+  - label: "security"
+    title: ["/security/i"]
+  - label: "fix"
+    title: ["/^fix/i"]
+  - label: "feature"
+    title: ["/^feat/i"]
+  - label: "ci"
+    title: ["/^ci/i"]
+  - label: "documentation"
+    title: ["/^docs/i"]
+  - label: "nix"
+    title: ["/nix/i"]
 template: |
   ## What’s Changed
 

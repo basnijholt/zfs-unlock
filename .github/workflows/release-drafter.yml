@@ -5,10 +5,13 @@ on:
   push:
     branches:
       - main
+  # The autolabeler needs to see PRs to apply category labels.
+  pull_request:
+    types: [opened, reopened, synchronize]
 
 permissions:
   contents: write
-  pull-requests: read
+  pull-requests: write
 
 jobs:
   update_release_draft:

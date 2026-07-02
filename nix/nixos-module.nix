@@ -1,7 +1,7 @@
 { config, lib, pkgs, ... }:
 
 let
-  cfg = config.services.zfsUnlock.receiver;
+  cfg = config.services.zfs-unlock.receiver;
 
   hasLineBreak = value:
     lib.hasInfix "\n" value || lib.hasInfix "\r" value;
@@ -28,6 +28,10 @@ let
       "$@"
   '';
 
+  # SSH_ORIGINAL_COMMAND must stay a SINGLE quoted argument: the receiver's
+  # defense against pinned-flag override (see _single_receiver_option in
+  # cli.py) assumes the untrusted command arrives as one argv element that it
+  # shlex-splits itself. Never unquote or word-split it here.
   sshWrapper = pkgs.writeShellScript "zfs-unlock-ssh-wrapper" ''
     set -eu
     exec ${config.security.wrapperDir}/sudo -n ${receiver} "''${SSH_ORIGINAL_COMMAND-}"
@@ -36,7 +40,7 @@ let
   forcedCommandKey = key: ''restrict,${fromOption}command="${sshWrapper}" ${key}'';
 in
 {
-  options.services.zfsUnlock.receiver = {
+  options.services.zfs-unlock.receiver = {
     enable = lib.mkEnableOption "the restricted zfs-unlock SSH receiver";
 
     package = lib.mkOption {
@@ -127,31 +131,38 @@ in
         # Without sshd the forced-command key is never materialized and the
         # receiver silently never works; fail at build time instead.
         assertion = config.services.openssh.enable;
-        message = "services.zfsUnlock.receiver requires services.openssh.enable = true.";
+        message = "services.zfs-unlock.receiver requires services.openssh.enable = true.";
+      }
+      {
+        # The SSH wrapper calls the sudo security wrapper unconditionally; with
+        # sudo disabled the receiver would fail at runtime with an opaque
+        # "command not found" over SSH instead of at build time.
+        assertion = config.security.sudo.enable;
+        message = "services.zfs-unlock.receiver requires security.sudo.enable = true.";
       }
       {
         assertion = cfg.allowedFrom != [ ];
-        message = "services.zfsUnlock.receiver.allowedFrom must include at least one source pattern.";
+        message = "services.zfs-unlock.receiver.allowedFrom must include at least one source pattern.";
       }
       {
         assertion = cfg.authorizedKeys != [ ];
-        message = "services.zfsUnlock.receiver.authorizedKeys must include at least one public key.";
+        message = "services.zfs-unlock.receiver.authorizedKeys must include at least one public key.";
       }
       {
         assertion = cfg.datasets != [ ];
-        message = "services.zfsUnlock.receiver.datasets must include at least one dataset.";
+        message = "services.zfs-unlock.receiver.datasets must include at least one dataset.";
       }
       {
         assertion = lib.all safeFromPattern cfg.allowedFrom;
-        message = "services.zfsUnlock.receiver.allowedFrom entries must not contain quotes or newlines.";
+        message = "services.zfs-unlock.receiver.allowedFrom entries must not contain quotes or newlines.";
       }
       {
         assertion = lib.all safeAuthorizedKey cfg.authorizedKeys;
-        message = "services.zfsUnlock.receiver.authorizedKeys entries must not contain newlines.";
+        message = "services.zfs-unlock.receiver.authorizedKeys entries must not contain newlines.";
       }
       {
         assertion = lib.all safeDatasetName cfg.datasets;
-        message = "services.zfsUnlock.receiver.datasets entries must be safe OpenZFS dataset names.";
+        message = "services.zfs-unlock.receiver.datasets entries must be safe OpenZFS dataset names.";
       }
     ];
 
