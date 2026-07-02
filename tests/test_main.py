@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import pytest
+
 from zfs_unlock.config import is_safe_dataset_name
 from zfs_unlock.process import CommandResult
 from zfs_unlock.receiver import Receiver, _ReceiverRequest, parse_receiver_command
@@ -67,6 +69,42 @@ def test_parse_receiver_command_uses_shell_words() -> None:
     """Receiver commands are parsed with shell-compatible quoting."""
     assert parse_receiver_command("status tank/photos") == ["status", "tank/photos"]
     assert parse_receiver_command("lock tank/photos --force") == ["lock", "tank/photos", "--force"]
+
+
+def test_receiver_rejects_empty_command(tmp_path: Path) -> None:
+    """The receiver refuses an empty command without running anything."""
+    allow_file = write_allowlist(tmp_path, "tank/photos")
+    runner = RecordingLocalRunner()
+    receiver = Receiver(allow_file=allow_file, runner=runner)
+
+    response = receiver.parse([])
+
+    assert isinstance(response, CommandResult)
+    assert response.returncode == 1
+    assert "missing command" in response.stderr
+    assert runner.calls == []
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["reboot"],
+        ["cat", "/etc/shadow"],
+        ["unlock"],
+    ],
+)
+def test_receiver_rejects_unsupported_command(tmp_path: Path, args: list[str]) -> None:
+    """The receiver refuses verbs outside status/unlock/lock and malformed argument counts."""
+    allow_file = write_allowlist(tmp_path, "tank/photos")
+    runner = RecordingLocalRunner()
+    receiver = Receiver(allow_file=allow_file, runner=runner)
+
+    response = receiver.parse(args)
+
+    assert isinstance(response, CommandResult)
+    assert response.returncode == 1
+    assert "unsupported command" in response.stderr
+    assert runner.calls == []
 
 
 def test_receiver_rejects_dataset_not_in_allowlist(tmp_path: Path) -> None:
