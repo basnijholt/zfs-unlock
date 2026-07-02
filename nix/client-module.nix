@@ -95,6 +95,11 @@ in
         # filesystem stays read-only ($HOME config, secret files, and the SSH
         # identity remain readable), privileges cannot grow, and only the
         # address families ssh needs are available.
+        #
+        # Read-only $HOME also means ssh cannot persist new known_hosts
+        # entries. Pin the receiver's host key before enabling the daemon
+        # (`zfs-unlock doctor` prints the ssh-keyscan command), as the README
+        # already requires for passphrase secrecy.
         NoNewPrivileges = true;
         ProtectSystem = "strict";
         ProtectHome = "read-only";
