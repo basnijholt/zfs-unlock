@@ -1096,6 +1096,36 @@ def test_keygen_failed_overwrite_preserves_existing_key(tmp_path: Path) -> None:
     assert list(tmp_path.glob("*.keygen-tmp*")) == [], "no temp files may be left behind"
 
 
+def test_keygen_install_failure_reports_cleanly_and_preserves_key(tmp_path: Path) -> None:
+    """An OSError while installing the generated pair is a clean error, not a traceback."""
+    key_path = tmp_path / "zfs-unlock-receiver"
+    pub_path = Path(f"{key_path}.pub")
+    key_path.write_text("old-private")
+    pub_path.write_text("old-public")
+
+    def fake_run(cmd: list[str], *, check: bool = True) -> MagicMock:  # noqa: ARG001
+        target = Path(cmd[cmd.index("-f") + 1])
+        target.write_text("private")
+        Path(f"{target}.pub").write_text("ssh-ed25519 AAAANEW zfs-unlock\n")
+        return MagicMock(stdout="", stderr="", returncode=0)
+
+    with (
+        patch("shutil.which", return_value="/usr/bin/ssh-keygen"),
+        patch("zfs_unlock.keygen.run_process", side_effect=fake_run),
+        patch("pathlib.Path.chmod", side_effect=PermissionError("Operation not permitted")),
+    ):
+        result = runner.invoke(app, ["keygen", "--identity-file", str(key_path), "--overwrite"])
+
+    # Collapse whitespace: rich wraps long lines at the terminal width.
+    output = " ".join(ANSI_RE.sub("", result.output).split())
+    assert result.exit_code == 1
+    assert "Failed to install the new key pair" in output
+    assert "Traceback" not in output
+    assert key_path.read_text() == "old-private"
+    assert pub_path.read_text() == "old-public"
+    assert list(tmp_path.glob("*.keygen-tmp*")) == [], "no temp files may be left behind"
+
+
 def test_keygen_failure_falls_back_to_stdout_detail(tmp_path: Path) -> None:
     """ssh-keygen errors written to stdout (e.g. overwrite prompts) are not discarded."""
     key_path = tmp_path / "key"

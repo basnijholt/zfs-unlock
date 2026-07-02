@@ -53,6 +53,12 @@ def keygen(
         detail = (exc.stderr or "").strip() or (exc.stdout or "").strip() or exc
         err_console.print(f"[red]ssh-keygen failed:[/red] {detail}")
         raise typer.Exit(1) from exc
+    except OSError as exc:
+        # chmod/replace failed after generation; the private key is renamed
+        # before the public one, so on a partial install the private key wins
+        # and the stale .pub can be regenerated with `ssh-keygen -y`.
+        err_console.print(f"[red]Failed to install the new key pair:[/red] {exc}")
+        raise typer.Exit(1) from exc
     finally:
         tmp_identity.unlink(missing_ok=True)
         tmp_public.unlink(missing_ok=True)
