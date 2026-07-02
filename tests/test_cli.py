@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import os
+import io
 import re
 import subprocess
 from pathlib import Path
@@ -13,7 +13,7 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
-from zfs_unlock.cli import _read_stdin_limited, _receiver, app
+from zfs_unlock.cli import _read_passphrase, _receiver, app
 from zfs_unlock.client import UnlockOutcome, filter_datasets
 from zfs_unlock.config import Dataset, find_config
 from zfs_unlock.constants import MAX_PASSPHRASE_BYTES
@@ -419,7 +419,7 @@ def test_cli_receiver_status_does_not_read_stdin(tmp_path: Path) -> None:
     request = SimpleNamespace(requires_stdin=False)
 
     with (
-        patch("zfs_unlock.cli.sys.stdin.read", side_effect=AssertionError("stdin should not be read")),
+        patch("zfs_unlock.cli._read_passphrase", side_effect=AssertionError("stdin should not be read")) as read_pass,
         patch("zfs_unlock.cli.Receiver") as receiver_cls,
     ):
         receiver_cls.return_value.parse.return_value = request
@@ -428,6 +428,7 @@ def test_cli_receiver_status_does_not_read_stdin(tmp_path: Path) -> None:
             _receiver(SimpleNamespace(args=["status tank/photos"]), allow_file=allow_file)
 
     assert exc_info.value.exit_code == 0
+    read_pass.assert_not_called()
     receiver_cls.return_value.parse.assert_called_once_with(["status", "tank/photos"])
     receiver_cls.return_value.handle.assert_called_once_with(request, stdin_text="")
 
@@ -440,7 +441,7 @@ def test_cli_receiver_unlock_reads_stdin(tmp_path: Path) -> None:
     request = SimpleNamespace(requires_stdin=True)
 
     with (
-        patch("zfs_unlock.cli.sys.stdin.read", return_value="secret\n") as stdin_read,
+        patch("zfs_unlock.cli._read_passphrase", return_value="secret\n") as read_pass,
         patch("zfs_unlock.cli.Receiver") as receiver_cls,
     ):
         receiver_cls.return_value.parse.return_value = request
@@ -449,58 +450,45 @@ def test_cli_receiver_unlock_reads_stdin(tmp_path: Path) -> None:
             _receiver(SimpleNamespace(args=["unlock tank/photos"]), allow_file=allow_file)
 
     assert exc_info.value.exit_code == 0
-    stdin_read.assert_called_once_with(MAX_PASSPHRASE_BYTES + 1)
+    read_pass.assert_called_once_with(MAX_PASSPHRASE_BYTES)
     receiver_cls.return_value.parse.assert_called_once_with(["unlock", "tank/photos"])
     receiver_cls.return_value.handle.assert_called_once_with(request, stdin_text="secret\n")
 
 
-def _pipe_stdin(monkeypatch: pytest.MonkeyPatch, payload: bytes) -> int:
-    """Point zfs_unlock.cli's stdin at a real pipe pre-filled with payload."""
-    read_fd, write_fd = os.pipe()
-    os.write(write_fd, payload)
-    os.close(write_fd)
-    monkeypatch.setattr("zfs_unlock.cli.sys.stdin", SimpleNamespace(fileno=lambda: read_fd))
-    return read_fd
+def _set_stdin_bytes(monkeypatch: pytest.MonkeyPatch, payload: bytes) -> None:
+    """Point zfs_unlock.cli's stdin at an in-memory byte buffer."""
+    monkeypatch.setattr("zfs_unlock.cli.sys.stdin", SimpleNamespace(buffer=io.BytesIO(payload)))
 
 
-def test_read_stdin_limited_reads_from_real_fd(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The fd-based reader returns the passphrase written to a real pipe."""
-    read_fd = _pipe_stdin(monkeypatch, b"secret-pass\n")
-    try:
-        assert _read_stdin_limited(1024, 5.0) == "secret-pass\n"
-    finally:
-        os.close(read_fd)
+def test_read_passphrase_returns_decoded_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The reader returns the stdin bytes decoded as UTF-8."""
+    _set_stdin_bytes(monkeypatch, b"secret-pass\n")
+    assert _read_passphrase(1024) == "secret-pass\n"
 
 
-def test_read_stdin_limited_rejects_invalid_utf8(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_read_passphrase_rejects_invalid_utf8(monkeypatch: pytest.MonkeyPatch) -> None:
     """Non-UTF-8 passphrase bytes are refused instead of silently corrupted."""
-    read_fd = _pipe_stdin(monkeypatch, b"\xff\xfe-not-utf8\n")
-    try:
-        assert _read_stdin_limited(1024, 5.0) is None
-    finally:
-        os.close(read_fd)
+    _set_stdin_bytes(monkeypatch, b"\xff\xfe-not-utf8\n")
+    assert _read_passphrase(1024) is None
 
 
-def test_read_stdin_limited_rejects_oversized_input_from_fd(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The fd-based reader enforces the byte cap."""
-    read_fd = _pipe_stdin(monkeypatch, b"x" * 2048)
-    try:
-        assert _read_stdin_limited(1024, 5.0) is None
-    finally:
-        os.close(read_fd)
+def test_read_passphrase_rejects_oversized_input(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Input larger than the cap is refused."""
+    _set_stdin_bytes(monkeypatch, b"x" * 2048)
+    assert _read_passphrase(1024) is None
 
 
 def test_cli_receiver_unlock_rejects_oversized_stdin(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Receiver refuses passphrase input larger than the stdin cap."""
+    """Receiver refuses passphrase input the reader rejects (too large or non-UTF-8)."""
     allow_file = tmp_path / "allowed"
     allow_file.write_text("tank/photos\n")
     request = SimpleNamespace(requires_stdin=True)
 
     with (
-        patch("zfs_unlock.cli.sys.stdin.read", return_value="x" * (MAX_PASSPHRASE_BYTES + 1)),
+        patch("zfs_unlock.cli._read_passphrase", return_value=None),
         patch("zfs_unlock.cli.Receiver") as receiver_cls,
     ):
         receiver_cls.return_value.parse.return_value = request
