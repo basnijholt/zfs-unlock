@@ -117,9 +117,9 @@ async def _check_receiver_status(client: ZfsUnlockClient, dataset: Dataset) -> b
         if "Host key verification failed" in stderr:
             config = client.config
             console.print(
-                "[yellow]hint:[/yellow] the receiver host key is not in known_hosts yet; run "
-                f"'ssh-keyscan -p {config.port} {config.host} >> ~/.ssh/known_hosts' "
-                "after verifying the fingerprint out of band",
+                "[yellow]hint:[/yellow] the receiver host key is not in known_hosts yet; run"
+                f" [bold]ssh-keyscan -p {config.port} {config.host} >> ~/.ssh/known_hosts[/bold]"
+                " after verifying the fingerprint out of band",
                 soft_wrap=True,
             )
         return False
@@ -135,8 +135,18 @@ async def _check_receiver_status(client: ZfsUnlockClient, dataset: Dataset) -> b
 
 async def _check_receiver_statuses(config: Config, datasets: list[Dataset]) -> bool:
     client = ZfsUnlockClient(config)
-    results = await asyncio.gather(*[_check_receiver_status(client, dataset) for dataset in datasets])
-    return all(results)
+    results = await asyncio.gather(
+        *[_check_receiver_status(client, dataset) for dataset in datasets],
+        return_exceptions=True,
+    )
+    ok = True
+    for dataset, result in zip(datasets, results, strict=True):
+        if isinstance(result, BaseException):
+            print_fail(f"receiver status check failed for {dataset.path}: {result!r}")
+            ok = False
+        elif not result:
+            ok = False
+    return ok
 
 
 def doctor(

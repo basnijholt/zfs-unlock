@@ -486,6 +486,28 @@ def test_doctor_hints_on_host_key_verification_failure(tmp_path: Path) -> None:
     assert "ssh-keyscan -p 22 192.0.2.1" in stdout
 
 
+def test_doctor_reports_crashed_receiver_check_without_traceback(tmp_path: Path) -> None:
+    """An unexpected exception in one receiver check fails cleanly."""
+    config_file = tmp_path / "config.yaml"
+    key = write_private_file(tmp_path / "zfs-unlock-receiver")
+    config_file.write_text(f"host: 192.0.2.1\nidentity_file: {key}\ndatasets:\n  tank/ds: pass")
+
+    with (
+        patch("socket.getaddrinfo", return_value=[object()]),
+        patch("socket.create_connection") as create_connection,
+        patch("zfs_unlock.diagnostics.ZfsUnlockClient") as client_cls,
+    ):
+        create_connection.return_value.__enter__.return_value = object()
+        client_cls.return_value.run_remote = AsyncMock(side_effect=RuntimeError("boom"))
+        result = runner.invoke(app, ["doctor", "--config", str(config_file)])
+
+    stdout = ANSI_RE.sub("", result.output)
+    assert result.exit_code == 1
+    assert "receiver status check failed for tank/ds" in stdout
+    assert "Traceback" not in stdout
+    assert isinstance(result.exception, SystemExit)  # clean exit, not the RuntimeError
+
+
 def test_doctor_reports_missing_ssh_executable(tmp_path: Path) -> None:
     """Doctor reports when ssh is unavailable in the current environment."""
     config_file = tmp_path / "config.yaml"
