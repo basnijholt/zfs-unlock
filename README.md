@@ -56,6 +56,11 @@ Letting another machine unlock your storage sounds risky, so the receiver is del
 
 So even if the receiver key leaks, it can't run arbitrary commands on the storage host — only those three actions, only on the datasets you allowlisted, and only from the address you allowed.
 
+Two limits of that model are worth stating plainly:
+
+- **A leaked receiver key is still a denial-of-service key.** `lock` and `lock --force` don't need the passphrase, so a stolen key can lock your datasets or force-unmount them (disrupting whatever is using them). It can't *unlock* anything — unlocking always needs the passphrase, which never leaves the unlock device.
+- **Passphrase secrecy in transit depends on SSH host-key verification.** The passphrase travels to the host over SSH, so a machine-in-the-middle that host-key checking doesn't catch could capture it. The client runs SSH in batch mode, so it *refuses* an unknown or changed host key instead of trusting it blindly — but that protection only holds if you pin the real key first. Before first use, add the host key to `known_hosts` and verify its fingerprint out of band (`zfs-unlock doctor` prints the exact `ssh-keyscan` command when the key is missing). Don't set `StrictHostKeyChecking no` for this host — it disables the check and exposes the passphrase to interception.
+
 ## Table of Contents
 
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
