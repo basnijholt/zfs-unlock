@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
+import time
 from typing import TYPE_CHECKING
 
-from zfs_unlock.client import SubprocessRunner, ZfsUnlockClient
+import pytest
+
+from zfs_unlock.client import SubprocessRunner, UnlockOutcome, ZfsUnlockClient, run_unlock
 from zfs_unlock.config import Config, Dataset
 from zfs_unlock.constants import (
     COMMAND_STARTUP_ERROR_RETURNCODE,
     COMMAND_TIMEOUT_RETURNCODE,
+    SSH_CONNECTION_ERROR_RETURNCODE,
 )
 from zfs_unlock.process import CommandResult
 
@@ -18,6 +23,18 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 CUSTOM_SSH_PORT = 2222
+
+# Child process that records its own pid, then hangs until killed.
+_PID_THEN_HANG = "import os, pathlib, sys, time; pathlib.Path(sys.argv[1]).write_text(str(os.getpid())); time.sleep(60)"
+
+
+def _pid_alive(pid: int) -> bool:
+    """Return whether a process with this pid still exists."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
 
 
 class RecordingRunner:
@@ -108,6 +125,63 @@ def test_subprocess_runner_returns_timeout_for_hanging_command() -> None:
     assert "timed out after 0.01s" in result.stderr
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process signals")
+def test_subprocess_runner_kills_child_on_timeout(tmp_path: Path) -> None:
+    """A timed-out child is killed, not left running behind the timeout result."""
+    pid_file = tmp_path / "child.pid"
+    runner = SubprocessRunner()
+
+    result = asyncio.run(
+        runner.run([sys.executable, "-c", _PID_THEN_HANG, str(pid_file)], command_timeout=2.0),
+    )
+
+    assert result.returncode == COMMAND_TIMEOUT_RETURNCODE
+    assert not _pid_alive(int(pid_file.read_text()))
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process signals")
+def test_subprocess_runner_kills_child_on_cancel(tmp_path: Path) -> None:
+    """Cancelling an in-flight run kills the child instead of orphaning it."""
+    pid_file = tmp_path / "child.pid"
+
+    async def scenario() -> int:
+        runner = SubprocessRunner()
+        task = asyncio.create_task(runner.run([sys.executable, "-c", _PID_THEN_HANG, str(pid_file)]))
+        while not (pid_file.exists() and pid_file.read_text()):  # noqa: ASYNC110 -- polling a file written by the child
+            await asyncio.sleep(0.01)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        return int(pid_file.read_text())
+
+    pid = asyncio.run(scenario())
+
+    assert not _pid_alive(pid)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process semantics")
+def test_subprocess_runner_timeout_returns_despite_inherited_pipe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A grandchild holding the stdout pipe open must not stall the timeout path.
+
+    ssh ProxyCommand helpers inherit the pipes; draining them unbounded after
+    kill() would block until the helper exits, defeating command_timeout.
+    """
+    monkeypatch.setattr("zfs_unlock.process._KILL_DRAIN_TIMEOUT", 0.2)
+    grandchild_holds_pipe = (
+        "import subprocess, sys, time; "
+        "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)']); "
+        "time.sleep(60)"
+    )
+    runner = SubprocessRunner()
+
+    start = time.monotonic()
+    result = asyncio.run(runner.run([sys.executable, "-c", grandchild_holds_pipe], command_timeout=0.5))
+    elapsed = time.monotonic() - start
+
+    assert result.returncode == COMMAND_TIMEOUT_RETURNCODE
+    assert elapsed < 10, "post-kill drain must be bounded, not wait for the grandchild"  # noqa: PLR2004
+
+
 def test_subprocess_runner_returns_error_for_missing_executable() -> None:
     """SubprocessRunner reports startup errors as command results."""
     runner = SubprocessRunner()
@@ -167,6 +241,34 @@ def test_unlock_sends_passphrase_over_stdin() -> None:
             30,
         ),
     ]
+
+
+@pytest.mark.parametrize(
+    "returncode",
+    [SSH_CONNECTION_ERROR_RETURNCODE, COMMAND_TIMEOUT_RETURNCODE, COMMAND_STARTUP_ERROR_RETURNCODE],
+)
+def test_is_locked_flags_every_connection_error_returncode(returncode: int) -> None:
+    """SSH failure (255), timeout (124), and startup error (127) are all connection errors."""
+    config = Config(host="zfs-host.example.lan", datasets=[Dataset(path="tank/photos", secret="pass")])
+    runner = RecordingRunner(CommandResult(returncode=returncode, stdout="", stderr="unreachable\n"))
+    client = ZfsUnlockClient(config, runner=runner)
+
+    status = asyncio.run(client.is_locked(config.datasets[0], quiet=True))
+
+    assert status.locked is None
+    assert status.connection_error is True
+
+
+@pytest.mark.parametrize(
+    "returncode",
+    [SSH_CONNECTION_ERROR_RETURNCODE, COMMAND_TIMEOUT_RETURNCODE, COMMAND_STARTUP_ERROR_RETURNCODE],
+)
+def test_run_unlock_reports_unreachable_for_every_connection_error_returncode(returncode: int) -> None:
+    """Timeouts and startup errors must trigger UNREACHABLE (panic mode), not FAILED."""
+    config = Config(host="zfs-host.example.lan", datasets=[Dataset(path="tank/photos", secret="pass")])
+    runner = RecordingRunner(CommandResult(returncode=returncode, stdout="", stderr="unreachable\n"))
+
+    assert asyncio.run(run_unlock(config, quiet=True, runner=runner)) is UnlockOutcome.UNREACHABLE
 
 
 def test_lock_uses_force_flag() -> None:

@@ -85,6 +85,14 @@
               self.nixosModules.receiver
               {
                 system.stateVersion = "26.11";
+                # Minimal bootable-ish config so forcing `config.assertions`
+                # below only surfaces real receiver-module failures.
+                boot.loader.grub.enable = false;
+                fileSystems."/" = {
+                  device = "none";
+                  fsType = "tmpfs";
+                };
+                services.openssh.enable = true;
                 services.zfsUnlock.receiver = {
                   enable = true;
                   allowedFrom = [ "192.0.2.7" ];
@@ -100,7 +108,16 @@
               }
             ];
           };
-          allowedDatasets = pkgs.writeText "allowed-datasets" eval.config.environment.etc."zfs-unlock/allowed-datasets".text;
+          # Reading environment.etc directly would skip module assertions
+          # (they only fire when building the system toplevel), so check
+          # them explicitly here.
+          failedAssertions = builtins.filter (a: !a.assertion) eval.config.assertions;
+          allowedDatasetsText =
+            if failedAssertions == [ ] then
+              eval.config.environment.etc."zfs-unlock/allowed-datasets".text
+            else
+              throw (nixpkgs.lib.concatMapStringsSep "\n" (a: a.message) failedAssertions);
+          allowedDatasets = pkgs.writeText "allowed-datasets" allowedDatasetsText;
         in
         {
           receiverModule = pkgs.runCommand "zfs-unlock-receiver-module-check" { } ''

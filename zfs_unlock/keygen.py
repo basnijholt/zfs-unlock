@@ -30,15 +30,21 @@ def keygen(
 
     identity_path = identity_file.expanduser()
     public_path = Path(f"{identity_path}.pub")
-    if not overwrite and (identity_path.exists() or public_path.exists()):
-        err_console.print(f"[red]Refusing to overwrite existing key: {identity_path}[/red]")
-        raise typer.Exit(1)
+    if identity_path.exists() or public_path.exists():
+        if not overwrite:
+            err_console.print(f"[red]Refusing to overwrite existing key: {identity_path}[/red]")
+            raise typer.Exit(1)
+        # ssh-keygen prompts "Overwrite (y/n)?" on captured stdout and fails
+        # without a terminal, so remove the old key pair up front.
+        identity_path.unlink(missing_ok=True)
+        public_path.unlink(missing_ok=True)
 
     identity_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     try:
         run_process([ssh_keygen, "-t", "ed25519", "-N", "", "-C", comment, "-f", str(identity_path)])
     except subprocess.CalledProcessError as exc:
-        err_console.print(f"[red]ssh-keygen failed:[/red] {(exc.stderr or '').strip() or exc}")
+        detail = (exc.stderr or "").strip() or (exc.stdout or "").strip() or exc
+        err_console.print(f"[red]ssh-keygen failed:[/red] {detail}")
         raise typer.Exit(1) from exc
     identity_path.chmod(0o600)
     public_path.chmod(0o644)

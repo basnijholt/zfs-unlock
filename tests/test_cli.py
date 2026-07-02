@@ -89,6 +89,46 @@ class TestFilterDatasets:
 
         assert [ds.path for ds in result] == ["tank/photos", "tank/photos/raw"]
 
+    def test_filter_is_case_sensitive(self) -> None:
+        """Matching is case-sensitive: dataset names are, and lock --force relies on it."""
+        datasets = [Dataset(path="tank/Photos", secret="pass1")]
+
+        assert filter_datasets(datasets, ["tank/photos"]) == []
+        assert filter_datasets(datasets, ["tank/Photos"]) == datasets
+
+    def test_question_mark_matches_exactly_one_character(self) -> None:
+        """`?` matches a single character, not zero or several."""
+        datasets = [
+            Dataset(path="tank/ds1", secret="pass1"),
+            Dataset(path="tank/ds12", secret="pass2"),
+            Dataset(path="tank/ds", secret="pass3"),
+        ]
+
+        result = filter_datasets(datasets, ["tank/ds?"])
+
+        assert [ds.path for ds in result] == ["tank/ds1"]
+
+    def test_character_class_matches_listed_characters(self) -> None:
+        """`[seq]` selects only the listed characters."""
+        datasets = [
+            Dataset(path="tank/ds1", secret="pass1"),
+            Dataset(path="tank/ds2", secret="pass2"),
+            Dataset(path="tank/ds3", secret="pass3"),
+        ]
+
+        result = filter_datasets(datasets, ["tank/ds[12]"])
+
+        assert [ds.path for ds in result] == ["tank/ds1", "tank/ds2"]
+
+    def test_empty_filter_list_returns_all(self) -> None:
+        """An empty filter list behaves like no filter at all."""
+        datasets = [
+            Dataset(path="tank/photos", secret="pass1"),
+            Dataset(path="tank/syncthing", secret="pass2"),
+        ]
+
+        assert filter_datasets(datasets, []) == datasets
+
 
 class TestFindConfig:
     """Tests for find_config function."""
@@ -276,24 +316,43 @@ def test_cli_daemon_keeps_normal_interval_on_non_connection_failures(tmp_path: P
     assert all(call.args == (10,) for call in mock_sleep.call_args_list)
 
 
+class _FakeClock:
+    """Deterministic monotonic clock advanced by the daemon's time.sleep calls."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+        self.sleeps: list[float] = []
+
+    def sleep(self, seconds: float) -> None:
+        """Record the sleep and advance the clock."""
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+    def monotonic(self) -> float:
+        """Return the current fake time."""
+        return self.now
+
+
 def test_cli_daemon_caps_panic_mode(tmp_path: Path) -> None:
     """Persistent unreachability stops fast polling and backs off to the interval."""
     config_file = tmp_path / "config.yaml"
     config_file.write_text("host: test\ndatasets:\n  tank/ds: pass")
+    clock = _FakeClock()
 
     fake_run_unlock = MagicMock(return_value=object())
     with (
         patch("zfs_unlock.cli.run_unlock", new=fake_run_unlock),
         patch("zfs_unlock.cli.PANIC_MODE_MAX_SECONDS", 2),
         patch("asyncio.run") as mock_run,
-        patch("time.sleep") as mock_sleep,
+        patch("time.sleep", side_effect=clock.sleep),
+        patch("time.monotonic", side_effect=clock.monotonic),
     ):
         mock_run.side_effect = [UnlockOutcome.UNREACHABLE] * 3 + [KeyboardInterrupt]
         result = runner.invoke(app, ["unlock", "--config", str(config_file), "--daemon", "--interval", "10"])
 
     stdout = ANSI_RE.sub("", result.stdout)
     assert result.exit_code == 0
-    assert [call.args[0] for call in mock_sleep.call_args_list] == [1, 1, 10]
+    assert clock.sleeps == [1, 1, 10]
     assert "backing off to 10s" in stdout
 
 
@@ -301,13 +360,15 @@ def test_cli_daemon_re_enters_panic_after_recovery(tmp_path: Path) -> None:
     """A recovered receiver resets the panic budget so the next outage polls fast again."""
     config_file = tmp_path / "config.yaml"
     config_file.write_text("host: test\ndatasets:\n  tank/ds: pass")
+    clock = _FakeClock()
 
     fake_run_unlock = MagicMock(return_value=object())
     with (
         patch("zfs_unlock.cli.run_unlock", new=fake_run_unlock),
         patch("zfs_unlock.cli.PANIC_MODE_MAX_SECONDS", 2),
         patch("asyncio.run") as mock_run,
-        patch("time.sleep") as mock_sleep,
+        patch("time.sleep", side_effect=clock.sleep),
+        patch("time.monotonic", side_effect=clock.monotonic),
     ):
         mock_run.side_effect = [
             UnlockOutcome.UNREACHABLE,
@@ -320,7 +381,39 @@ def test_cli_daemon_re_enters_panic_after_recovery(tmp_path: Path) -> None:
         result = runner.invoke(app, ["unlock", "--config", str(config_file), "--daemon", "--interval", "10"])
 
     assert result.exit_code == 0
-    assert [call.args[0] for call in mock_sleep.call_args_list] == [1, 1, 10, 10, 1]
+    assert clock.sleeps == [1, 1, 10, 10, 1]
+
+
+def test_cli_daemon_panic_cap_counts_probe_latency(tmp_path: Path) -> None:
+    """The panic cap is wall-clock: slow unreachable probes consume the budget too."""
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("host: test\ndatasets:\n  tank/ds: pass")
+    clock = _FakeClock()
+    probe_latency = 5.0  # each unreachable SSH probe blocks ~connect_timeout
+    probes = 0
+
+    def slow_probe(_coro: object) -> UnlockOutcome:
+        nonlocal probes
+        probes += 1
+        if probes > 3:  # noqa: PLR2004
+            raise KeyboardInterrupt
+        clock.now += probe_latency
+        return UnlockOutcome.UNREACHABLE
+
+    fake_run_unlock = MagicMock(return_value=object())
+    with (
+        patch("zfs_unlock.cli.run_unlock", new=fake_run_unlock),
+        patch("zfs_unlock.cli.PANIC_MODE_MAX_SECONDS", 12),
+        patch("asyncio.run", side_effect=slow_probe),
+        patch("time.sleep", side_effect=clock.sleep),
+        patch("time.monotonic", side_effect=clock.monotonic),
+    ):
+        result = runner.invoke(app, ["unlock", "--config", str(config_file), "--daemon", "--interval", "10"])
+
+    # 3 probes x 5s: the second check sees 6s elapsed (<12), the third 12s (cap
+    # reached). Interval counting would have seen only 1s+1s and kept panicking.
+    assert result.exit_code == 0
+    assert clock.sleeps == [1, 1, 10]
 
 
 @pytest.mark.parametrize("interval", ["0", "-1"])
@@ -524,6 +617,21 @@ def test_read_passphrase_rejects_oversized_input(monkeypatch: pytest.MonkeyPatch
     """Input larger than the cap is refused."""
     _set_stdin_bytes(monkeypatch, b"x" * 2048)
     assert _read_passphrase(1024) is None
+
+
+def test_read_passphrase_accepts_exactly_limit_bytes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Input of exactly the cap is still accepted."""
+    limit = 1024
+    payload = b"x" * limit
+    _set_stdin_bytes(monkeypatch, payload)
+    assert _read_passphrase(limit) == payload.decode()
+
+
+def test_read_passphrase_rejects_one_byte_over_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Input of cap + 1 bytes is refused: the boundary is exclusive."""
+    limit = 1024
+    _set_stdin_bytes(monkeypatch, b"x" * (limit + 1))
+    assert _read_passphrase(limit) is None
 
 
 def test_cli_receiver_unlock_rejects_oversized_stdin(
@@ -875,6 +983,69 @@ def test_keygen_creates_key_dir_privately(tmp_path: Path) -> None:
     assert result.exit_code == 0
     assert key_dir.is_dir()
     assert key_dir.stat().st_mode & 0o077 == 0
+
+
+def test_keygen_refuses_existing_key_without_overwrite(tmp_path: Path) -> None:
+    """An existing key pair is never replaced unless --overwrite is passed."""
+    key_path = tmp_path / "zfs-unlock-receiver"
+    key_path.write_text("old-private")
+
+    with (
+        patch("shutil.which", return_value="/usr/bin/ssh-keygen"),
+        patch("zfs_unlock.keygen.run_process") as mock_run,
+    ):
+        result = runner.invoke(app, ["keygen", "--identity-file", str(key_path)])
+
+    assert result.exit_code == 1
+    assert "Refusing to overwrite" in ANSI_RE.sub("", result.output)
+    mock_run.assert_not_called()
+    assert key_path.read_text() == "old-private"
+
+
+def test_keygen_overwrite_removes_stale_key_before_ssh_keygen(tmp_path: Path) -> None:
+    """--overwrite unlinks the old key pair so ssh-keygen never prompts on stdout."""
+    key_path = tmp_path / "zfs-unlock-receiver"
+    pub_path = Path(f"{key_path}.pub")
+    key_path.write_text("old-private")
+    pub_path.write_text("old-public")
+
+    def fake_run(cmd: list[str], *, check: bool = True) -> MagicMock:  # noqa: ARG001
+        assert not key_path.exists(), "stale private key must be removed before ssh-keygen runs"
+        assert not pub_path.exists(), "stale public key must be removed before ssh-keygen runs"
+        key_path.write_text("private")
+        pub_path.write_text("ssh-ed25519 AAAANEW zfs-unlock\n")
+        return MagicMock(stdout="", stderr="", returncode=0)
+
+    with (
+        patch("shutil.which", return_value="/usr/bin/ssh-keygen"),
+        patch("zfs_unlock.keygen.run_process", side_effect=fake_run),
+    ):
+        result = runner.invoke(app, ["keygen", "--identity-file", str(key_path), "--overwrite"])
+
+    assert result.exit_code == 0
+    assert "ssh-ed25519 AAAANEW zfs-unlock" in result.stdout
+
+
+def test_keygen_failure_falls_back_to_stdout_detail(tmp_path: Path) -> None:
+    """ssh-keygen errors written to stdout (e.g. overwrite prompts) are not discarded."""
+    key_path = tmp_path / "key"
+    error = subprocess.CalledProcessError(
+        1,
+        ["ssh-keygen"],
+        output=f"{key_path} already exists.\nOverwrite (y/n)? ",
+        stderr="",
+    )
+
+    with (
+        patch("zfs_unlock.keygen.shutil.which", return_value="/usr/bin/ssh-keygen"),
+        patch("zfs_unlock.keygen.run_process", side_effect=error),
+    ):
+        result = runner.invoke(app, ["keygen", "--identity-file", str(key_path)])
+
+    output = ANSI_RE.sub("", result.output)
+    assert result.exit_code == 1
+    assert "ssh-keygen failed" in output
+    assert "already exists" in output
 
 
 def test_keygen_reports_ssh_keygen_failure(tmp_path: Path) -> None:

@@ -213,3 +213,33 @@ class TestConfig:
 
         with pytest.raises(ValidationError):
             Config.from_yaml(config_file)
+
+    def test_from_yaml_rejects_infinite_command_timeout(self, tmp_path: Path) -> None:
+        """YAML `.inf` must not disable the command timeout and wedge the daemon."""
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            dedent("""\
+            host: zfs-host.example.lan
+            command_timeout: .inf
+            datasets:
+              tank/photos: passphrase
+            """),
+        )
+
+        with pytest.raises(ValidationError):
+            Config.from_yaml(config_file)
+
+    def test_secret_file_is_read_as_utf8(self, tmp_path: Path) -> None:
+        """File-backed secrets are decoded as UTF-8, matching the wire encoding."""
+        secret_file = tmp_path / "secret"
+        secret_file.write_bytes("pass-café\n".encode())
+
+        assert _resolve_secret(str(secret_file), SecretsMode.FILES) == "pass-café"
+
+
+def test_example_config_documents_every_field() -> None:
+    """config.example.yaml is the canonical example and must mention every field."""
+    example = Path("config.example.yaml").read_text()
+
+    for field in Config.model_fields:
+        assert field in example, f"config.example.yaml is missing the `{field}` field"

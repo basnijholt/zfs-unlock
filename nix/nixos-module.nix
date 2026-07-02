@@ -124,6 +124,12 @@ in
   config = lib.mkIf cfg.enable {
     assertions = [
       {
+        # Without sshd the forced-command key is never materialized and the
+        # receiver silently never works; fail at build time instead.
+        assertion = config.services.openssh.enable;
+        message = "services.zfsUnlock.receiver requires services.openssh.enable = true.";
+      }
+      {
         assertion = cfg.allowedFrom != [ ];
         message = "services.zfsUnlock.receiver.allowedFrom must include at least one source pattern.";
       }
