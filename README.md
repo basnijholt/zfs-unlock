@@ -54,11 +54,11 @@ Letting another machine unlock your storage sounds risky, so the receiver is del
 - a receiver-side allowlist of the datasets it may touch
 - a parser that accepts only `status`, `unlock`, and `lock`
 
-So even if the receiver key leaks, it can't run arbitrary commands on the storage host — only those three actions, only on the datasets you allowlisted, and only from the address you allowed.
+So even if the receiver key leaks, it can't run arbitrary commands on the storage host — only those three actions, only on the datasets you allowlisted, and only from a source address you allowed (a network-level restriction, not a second secret: any host sharing that source address, e.g. behind the same NAT, also passes).
 
 Two limits of that model are worth stating plainly:
 
-- **A leaked receiver key is still a denial-of-service key.** `lock` and `lock --force` don't need the passphrase, so a stolen key can lock your datasets or force-unmount them (disrupting whatever is using them). It can't *unlock* anything — unlocking always needs the passphrase, which never leaves the unlock device.
+- **A leaked receiver key is still a denial-of-service key, and a passphrase-guessing oracle.** `lock` and `lock --force` don't need the passphrase, so a stolen key can lock your datasets or force-unmount them (disrupting whatever is using them). It can't *unlock* anything without the passphrase, which never leaves the unlock device — but it can *try*: a stolen key lets an attacker send unlimited `unlock` attempts, each one guessing the passphrase against `zfs load-key`, with no rate limiting on the receiver. The passphrase's own entropy is therefore the last barrier, so use a high-entropy passphrase, and consider a `fail2ban`-style guard on the receiver account.
 - **Passphrase secrecy in transit depends on SSH host-key verification.** The passphrase travels to the host over SSH, so a machine-in-the-middle that host-key checking doesn't catch could capture it. The client pins `StrictHostKeyChecking=ask` on the ssh command line (which, combined with batch mode, means *refuse* rather than prompt), so it fails closed on an unknown or changed host key instead of trusting it blindly — even if your `ssh_config` sets `StrictHostKeyChecking accept-new` (or `no`) for this host. That protection only holds if you pin the real key first: before first use, add the host key to `known_hosts` and verify its fingerprint out of band (`zfs-unlock doctor` prints the exact `ssh-keyscan` command when the key is missing).
 
 ## Table of Contents
