@@ -11,7 +11,7 @@ from typing import Annotated
 
 import typer
 
-from .client import ZfsUnlockClient
+from .client import ZfsUnlockClient, filter_datasets
 from .config import Config, Dataset, SecretsMode, load_config
 from .output import console, print_fail, print_ok
 
@@ -96,16 +96,15 @@ def _check_host_reachable(config: Config) -> bool:
     return ok
 
 
-def _select_doctor_datasets(datasets: list[Dataset], dataset: str | None) -> list[Dataset]:
-    if dataset is None:
+def _select_doctor_datasets(datasets: list[Dataset], dataset_filters: list[str] | None) -> list[Dataset]:
+    if not dataset_filters:
         return datasets
 
-    for configured in datasets:
-        if configured.path == dataset:
-            return [configured]
-
-    print_fail(f"dataset not configured: {dataset}")
-    raise typer.Exit(1)
+    selected = filter_datasets(datasets, dataset_filters)
+    if not selected:
+        print_fail(f"no configured datasets match: {', '.join(dataset_filters)}")
+        raise typer.Exit(1)
+    return selected
 
 
 async def _check_receiver_status(client: ZfsUnlockClient, dataset: Dataset) -> bool:
@@ -151,7 +150,7 @@ async def _check_receiver_statuses(config: Config, datasets: list[Dataset]) -> b
 
 def doctor(
     config_path: Annotated[Path | None, typer.Option("--config", "-c", help="Config file path")] = None,
-    dataset: Annotated[str | None, typer.Option("--dataset", "-D", help="Dataset to check")] = None,
+    dataset: Annotated[list[str] | None, typer.Option("--dataset", "-D", help="Dataset path or glob to check")] = None,
 ) -> None:
     """Check client config, SSH key, host reachability, and receiver status."""
     config_path, config = load_config(config_path)
