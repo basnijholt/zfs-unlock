@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import os
 import platform
+import shlex
 import shutil
 from pathlib import Path
 from typing import Annotated
+from xml.sax.saxutils import escape
 
 import typer
 
@@ -22,7 +24,7 @@ Wants=network-online.target
 
 [Service]
 Environment="PATH={path}"
-ExecStart={uv_path} tool run zfs-unlock unlock --daemon
+ExecStart={exec_start}
 Restart=on-failure
 RestartSec=10
 
@@ -40,12 +42,7 @@ _LAUNCHD_PLIST = """\
   <string>com.zfs_unlock</string>
   <key>ProgramArguments</key>
   <array>
-    <string>{uv_path}</string>
-    <string>tool</string>
-    <string>run</string>
-    <string>zfs-unlock</string>
-    <string>unlock</string>
-    <string>--daemon</string>
+{program_arguments}
   </array>
   <key>RunAtLoad</key>
   <true/>
@@ -64,19 +61,34 @@ _LAUNCHD_PLIST = """\
 service_app = typer.Typer(help="Manage system service", no_args_is_help=True)
 
 
-def _get_uv_path() -> Path | None:
-    """Find uv executable."""
+def _daemon_argv() -> list[str]:
+    """Resolve the daemon command, pinning the installed zfs-unlock executable.
+
+    The service must run the same binary the user installed, not whatever a
+    runtime resolver picks later; `uv tool run` is only a fallback for setups
+    where zfs-unlock itself is not on PATH.
+    """
+    exe = shutil.which("zfs-unlock")
+    if exe is not None:
+        return [exe, "unlock", "--daemon"]
+
     uv = shutil.which("uv")
-    return Path(uv) if uv else None
+    if uv is not None:
+        err_console.print(
+            "[yellow]Warning: zfs-unlock not found on PATH; the service will resolve"
+            " the latest release through 'uv tool run' at startup.[/yellow]",
+        )
+        err_console.print("Prefer 'uv tool install zfs-unlock' and reinstall the service.")
+        return [uv, "tool", "run", "zfs-unlock", "unlock", "--daemon"]
+
+    err_console.print("[red]Error: neither zfs-unlock nor uv found on PATH.[/red]")
+    raise typer.Exit(1)
 
 
 @service_app.command("install")
 def service_install() -> None:
     """Install and start the system service."""
-    uv_path = _get_uv_path()
-    if not uv_path:
-        err_console.print("[red]Error: uv not found. Install from https://docs.astral.sh/uv/[/red]")
-        raise typer.Exit(1)
+    argv = _daemon_argv()
 
     config_path = find_config()
     if not config_path:
@@ -85,23 +97,24 @@ def service_install() -> None:
 
     system = platform.system()
     if system == "Darwin":
-        _install_macos(uv_path)
+        _install_macos(argv)
     elif system == "Linux":
-        _install_linux(uv_path)
+        _install_linux(argv)
     else:
         err_console.print(f"[red]Unsupported OS: {system}[/red]")
         raise typer.Exit(1)
 
 
-def _install_macos(uv_path: Path) -> None:
+def _install_macos(argv: list[str]) -> None:
     """Install launchd service on macOS."""
     plist_name = "com.zfs_unlock.plist"
     plist_dst = Path.home() / "Library" / "LaunchAgents" / plist_name
     log_dir = Path.home() / "Library" / "Logs" / "zfs-unlock"
 
+    program_arguments = "\n".join(f"    <string>{escape(arg)}</string>" for arg in argv)
     log_dir.mkdir(parents=True, exist_ok=True)
     plist_dst.parent.mkdir(parents=True, exist_ok=True)
-    plist_dst.write_text(_LAUNCHD_PLIST.format(uv_path=uv_path, home=Path.home(), log_dir=log_dir))
+    plist_dst.write_text(_LAUNCHD_PLIST.format(program_arguments=program_arguments, home=Path.home(), log_dir=log_dir))
     run_process(["launchctl", "load", str(plist_dst)])
 
     console.print("[green]OK[/green] Service installed and started")
@@ -109,7 +122,7 @@ def _install_macos(uv_path: Path) -> None:
     console.print("\n  Uninstall: [bold]zfs-unlock service uninstall[/bold]")
 
 
-def _install_linux(uv_path: Path) -> None:
+def _install_linux(argv: list[str]) -> None:
     """Install systemd user service on Linux."""
     service_name = "zfs-unlock.service"
     service_dir = Path.home() / ".config" / "systemd" / "user"
@@ -117,7 +130,7 @@ def _install_linux(uv_path: Path) -> None:
 
     service_dir.mkdir(parents=True, exist_ok=True)
     current_path = os.environ.get("PATH", "/usr/bin:/bin")
-    service_dst.write_text(_SYSTEMD_SERVICE.format(uv_path=uv_path, path=current_path))
+    service_dst.write_text(_SYSTEMD_SERVICE.format(exec_start=shlex.join(argv), path=current_path))
 
     run_process(["systemctl", "--user", "daemon-reload"])
     run_process(["systemctl", "--user", "enable", "--now", "zfs-unlock"])
