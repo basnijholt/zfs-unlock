@@ -191,7 +191,7 @@ zfs-unlock doctor
 zfs-unlock unlock
 
 # Run as daemon
-# (Checks every 1s if the receiver host is unreachable, otherwise every 30s)
+# (Polls every 30s; every 1s while the host is unreachable, capped at ~5 min)
 zfs-unlock unlock --daemon
 
 # Custom interval (for the "relaxed" state)
