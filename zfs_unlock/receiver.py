@@ -116,6 +116,9 @@ class Receiver:
                 return self._unlock(request.dataset, stdin_text=stdin_text)
             case _ReceiverAction.LOCK:
                 return self._lock(request.dataset, force=request.force)
+            case _:  # pragma: no cover - unreachable while the enum has three members
+                # Fail closed if a new action is ever parsed but not handled.
+                return self._error("unsupported command")
 
     @cached_property
     def _allowed_datasets(self) -> frozenset[str]:
