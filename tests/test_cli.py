@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,7 +12,7 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
-from zfs_unlock.cli import _receiver, app
+from zfs_unlock.cli import _read_stdin_limited, _receiver, app
 from zfs_unlock.client import _filter_datasets
 from zfs_unlock.config import Dataset, find_config
 from zfs_unlock.constants import MAX_PASSPHRASE_BYTES
@@ -378,6 +379,42 @@ def test_cli_receiver_unlock_reads_stdin(tmp_path: Path) -> None:
     stdin_read.assert_called_once_with(MAX_PASSPHRASE_BYTES + 1)
     receiver_cls.return_value.parse.assert_called_once_with(["unlock", "tank/photos"])
     receiver_cls.return_value.handle.assert_called_once_with(request, stdin_text="secret\n")
+
+
+def _pipe_stdin(monkeypatch: pytest.MonkeyPatch, payload: bytes) -> int:
+    """Point zfs_unlock.cli's stdin at a real pipe pre-filled with payload."""
+    read_fd, write_fd = os.pipe()
+    os.write(write_fd, payload)
+    os.close(write_fd)
+    monkeypatch.setattr("zfs_unlock.cli.sys.stdin", SimpleNamespace(fileno=lambda: read_fd))
+    return read_fd
+
+
+def test_read_stdin_limited_reads_from_real_fd(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The fd-based reader returns the passphrase written to a real pipe."""
+    read_fd = _pipe_stdin(monkeypatch, b"secret-pass\n")
+    try:
+        assert _read_stdin_limited(1024, 5.0) == "secret-pass\n"
+    finally:
+        os.close(read_fd)
+
+
+def test_read_stdin_limited_rejects_invalid_utf8(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Non-UTF-8 passphrase bytes are refused instead of silently corrupted."""
+    read_fd = _pipe_stdin(monkeypatch, b"\xff\xfe-not-utf8\n")
+    try:
+        assert _read_stdin_limited(1024, 5.0) is None
+    finally:
+        os.close(read_fd)
+
+
+def test_read_stdin_limited_rejects_oversized_input_from_fd(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The fd-based reader enforces the byte cap."""
+    read_fd = _pipe_stdin(monkeypatch, b"x" * 2048)
+    try:
+        assert _read_stdin_limited(1024, 5.0) is None
+    finally:
+        os.close(read_fd)
 
 
 def test_cli_receiver_unlock_rejects_oversized_stdin(

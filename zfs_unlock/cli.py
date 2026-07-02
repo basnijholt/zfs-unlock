@@ -108,15 +108,24 @@ def _status(
 
 
 def _read_stdin_limited(limit: int, timeout: float) -> str | None:
-    """Read stdin to EOF; None when it exceeds `limit` bytes or `timeout` seconds.
+    """Read stdin to EOF; None when over `limit` bytes, past `timeout`, or not UTF-8.
 
     The receiver runs as root behind an SSH forced command, so a client must
-    not be able to park it forever or feed it unbounded input.
+    not be able to park it forever or feed it unbounded input. Refusing
+    non-UTF-8 input keeps failures explicit: a lenient decode would hand
+    `zfs load-key` a silently corrupted passphrase.
+
+    Reading the raw fd with os.read is only correct because this is the
+    process's first and only stdin consumer — nothing may touch sys.stdin
+    (and buffer bytes away from the fd) before this call.
     """
     try:
         fd = sys.stdin.fileno()
     except (ValueError, OSError):  # non-file stdin, e.g. in tests
-        data = sys.stdin.read(limit + 1)
+        try:
+            data = sys.stdin.read(limit + 1)
+        except UnicodeDecodeError:
+            return None
         return None if len(data) > limit else data
 
     deadline = time.monotonic() + timeout
@@ -135,7 +144,10 @@ def _read_stdin_limited(limit: int, timeout: float) -> str | None:
             if total > limit:
                 return None
             chunks.append(chunk)
-    return b"".join(chunks).decode(errors="replace")
+    try:
+        return b"".join(chunks).decode()
+    except UnicodeDecodeError:
+        return None
 
 
 def _receiver(
@@ -171,7 +183,10 @@ def _receiver(
             response = CommandResult(
                 returncode=1,
                 stdout="",
-                stderr=f"refusing passphrase: stdin exceeded {MAX_PASSPHRASE_BYTES} bytes or timed out\n",
+                stderr=(
+                    f"refusing passphrase: stdin exceeded {MAX_PASSPHRASE_BYTES} bytes,"
+                    " timed out, or was not valid UTF-8\n"
+                ),
             )
         else:
             response = receiver_instance.handle(request, stdin_text=stdin_text)
