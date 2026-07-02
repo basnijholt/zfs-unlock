@@ -14,6 +14,7 @@ from typer.testing import CliRunner
 from zfs_unlock.cli import _receiver, app
 from zfs_unlock.client import _filter_datasets
 from zfs_unlock.config import Dataset, find_config
+from zfs_unlock.constants import MAX_PASSPHRASE_BYTES
 
 runner = CliRunner()
 DAEMON_RUN_CALLS = 3
@@ -374,9 +375,31 @@ def test_cli_receiver_unlock_reads_stdin(tmp_path: Path) -> None:
             _receiver(SimpleNamespace(args=["unlock tank/photos"]), allow_file=allow_file)
 
     assert exc_info.value.exit_code == 0
-    stdin_read.assert_called_once_with()
+    stdin_read.assert_called_once_with(MAX_PASSPHRASE_BYTES + 1)
     receiver_cls.return_value.parse.assert_called_once_with(["unlock", "tank/photos"])
     receiver_cls.return_value.handle.assert_called_once_with(request, stdin_text="secret\n")
+
+
+def test_cli_receiver_unlock_rejects_oversized_stdin(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Receiver refuses passphrase input larger than the stdin cap."""
+    allow_file = tmp_path / "allowed"
+    allow_file.write_text("tank/photos\n")
+    request = SimpleNamespace(requires_stdin=True)
+
+    with (
+        patch("zfs_unlock.cli.sys.stdin.read", return_value="x" * (MAX_PASSPHRASE_BYTES + 1)),
+        patch("zfs_unlock.cli.Receiver") as receiver_cls,
+    ):
+        receiver_cls.return_value.parse.return_value = request
+        with pytest.raises(typer.Exit) as exc_info:
+            _receiver(SimpleNamespace(args=["unlock tank/photos"]), allow_file=allow_file)
+
+    assert exc_info.value.exit_code == 1
+    assert "refusing passphrase" in capsys.readouterr().err
+    receiver_cls.return_value.handle.assert_not_called()
 
 
 def test_cli_receiver_disallowed_unlock_does_not_read_stdin(
