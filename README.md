@@ -47,9 +47,6 @@ So even if the receiver key leaks, it can't run arbitrary commands on the storag
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 
-- [Why?](#why)
-- [How it works](#how-it-works)
-- [Security model](#security-model)
 - [Install](#install)
 - [Setup](#setup)
 - [Usage](#usage)
