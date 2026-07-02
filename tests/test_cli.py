@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -593,6 +594,52 @@ def test_doctor_checks_receiver_status(tmp_path: Path) -> None:
     assert "receiver status ok" in result.stdout
 
 
+def test_doctor_hints_on_host_key_verification_failure(tmp_path: Path) -> None:
+    """Doctor explains how to trust the receiver host key when SSH refuses it."""
+    config_file = tmp_path / "config.yaml"
+    key = write_private_file(tmp_path / "zfs-unlock-receiver")
+    config_file.write_text(f"host: 192.0.2.1\nidentity_file: {key}\ndatasets:\n  tank/ds: pass")
+
+    with (
+        patch("socket.getaddrinfo", return_value=[object()]),
+        patch("socket.create_connection") as create_connection,
+        patch("zfs_unlock.diagnostics.ZfsUnlockClient") as client_cls,
+    ):
+        create_connection.return_value.__enter__.return_value = object()
+        client_cls.return_value.config = SimpleNamespace(host="192.0.2.1", port=22)
+        client_cls.return_value.run_remote = AsyncMock(
+            return_value=MagicMock(returncode=255, stdout="", stderr="Host key verification failed.\n"),
+        )
+        result = runner.invoke(app, ["doctor", "--config", str(config_file)])
+
+    stdout = ANSI_RE.sub("", result.stdout)
+    assert result.exit_code == 1
+    assert "receiver status failed" in stdout
+    assert "ssh-keyscan -p 22 192.0.2.1" in stdout
+
+
+def test_doctor_reports_crashed_receiver_check_without_traceback(tmp_path: Path) -> None:
+    """An unexpected exception in one receiver check fails cleanly."""
+    config_file = tmp_path / "config.yaml"
+    key = write_private_file(tmp_path / "zfs-unlock-receiver")
+    config_file.write_text(f"host: 192.0.2.1\nidentity_file: {key}\ndatasets:\n  tank/ds: pass")
+
+    with (
+        patch("socket.getaddrinfo", return_value=[object()]),
+        patch("socket.create_connection") as create_connection,
+        patch("zfs_unlock.diagnostics.ZfsUnlockClient") as client_cls,
+    ):
+        create_connection.return_value.__enter__.return_value = object()
+        client_cls.return_value.run_remote = AsyncMock(side_effect=RuntimeError("boom"))
+        result = runner.invoke(app, ["doctor", "--config", str(config_file)])
+
+    stdout = ANSI_RE.sub("", result.output)
+    assert result.exit_code == 1
+    assert "receiver status check failed for tank/ds" in stdout
+    assert "Traceback" not in stdout
+    assert isinstance(result.exception, SystemExit)  # clean exit, not the RuntimeError
+
+
 def test_doctor_reports_missing_ssh_executable(tmp_path: Path) -> None:
     """Doctor reports when ssh is unavailable in the current environment."""
     config_file = tmp_path / "config.yaml"
@@ -770,6 +817,46 @@ def test_keygen_creates_unlock_key(tmp_path: Path) -> None:
     assert "ssh-ed25519 AAAATEST zfs-unlock" in result.stdout
     assert key_path.exists()
     assert Path(f"{key_path}.pub").exists()
+
+
+def test_keygen_reports_ssh_keygen_failure(tmp_path: Path) -> None:
+    """A failing ssh-keygen surfaces as a clean error, not a traceback."""
+    key_path = tmp_path / "key"
+    error = subprocess.CalledProcessError(1, ["ssh-keygen"], stderr="keygen exploded\n")
+
+    with (
+        patch("zfs_unlock.keygen.shutil.which", return_value="/usr/bin/ssh-keygen"),
+        patch("zfs_unlock.keygen.run_process", side_effect=error),
+    ):
+        result = runner.invoke(app, ["keygen", "--identity-file", str(key_path)])
+
+    output = ANSI_RE.sub("", result.output)
+    assert result.exit_code == 1
+    assert "ssh-keygen failed" in output
+    assert "keygen exploded" in output
+    assert "Traceback" not in output
+
+
+def test_service_install_linux_reports_systemctl_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failing systemctl surfaces as a clean error, not a traceback."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    error = subprocess.CalledProcessError(1, ["systemctl"], stderr="Failed to connect to bus\n")
+
+    with (
+        patch("zfs_unlock.service.platform.system", return_value="Linux"),
+        patch("zfs_unlock.service.shutil.which", return_value="/opt/uv/bin/uv"),
+        patch("zfs_unlock.service.run_process", side_effect=error),
+    ):
+        result = runner.invoke(app, ["service", "install"])
+
+    output = ANSI_RE.sub("", result.output)
+    assert result.exit_code == 1
+    assert "Command failed" in output
+    assert "Failed to connect to bus" in output
+    assert "Traceback" not in output
 
 
 def test_service_install_linux_pins_current_executable(

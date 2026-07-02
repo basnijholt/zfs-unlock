@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import fnmatch
+import os
 import shlex
 from dataclasses import dataclass
 from enum import StrEnum
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .constants import (
@@ -45,12 +47,32 @@ class DatasetStatus:
     connection_error: bool = False
 
 
+def _ssh_control_dir() -> Path | None:
+    """Return a private directory for SSH multiplexing sockets, or None.
+
+    The control socket must live in a directory only this user can write:
+    a squatted or shared ControlPath would let another local user hijack
+    the multiplexed session that carries passphrases. No multiplexing is
+    used when no such directory can be prepared.
+    """
+    runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
+    parent = Path(runtime_dir) if runtime_dir else Path.home() / ".cache"
+    control_dir = parent / "zfs-unlock"
+    try:
+        control_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        control_dir.chmod(0o700)
+    except OSError:
+        return None
+    return control_dir
+
+
 class ZfsUnlockClient:
     """Client for a restricted SSH ZFS unlock receiver."""
 
     def __init__(self, config: Config, *, runner: CommandRunner | None = None) -> None:  # noqa: D107
         self.config = config
         self.runner = runner or SubprocessRunner()
+        self._control_dir = _ssh_control_dir()
 
     def _ssh_args(self, remote_args: list[str], *, close_stdin: bool = False) -> list[str]:
         args = [
@@ -62,6 +84,17 @@ class ZfsUnlockClient:
             "-o",
             f"ConnectTimeout={self.config.connect_timeout}",
         ]
+        if self._control_dir is not None:
+            args.extend(
+                [
+                    "-o",
+                    "ControlMaster=auto",
+                    "-o",
+                    f"ControlPath={self._control_dir}/%C",
+                    "-o",
+                    "ControlPersist=15s",
+                ],
+            )
         if close_stdin:
             args.append("-n")
         if self.config.identity_file is not None:
