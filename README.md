@@ -28,6 +28,20 @@ Two machines, two roles:
 - the **unlock device** stores the passphrases and runs `zfs-unlock unlock` — once, or as a daemon that waits for the host to come online
 - the **ZFS host** runs a restricted receiver that can only check, unlock, or lock the datasets you explicitly allow
 
+```mermaid
+flowchart LR
+    subgraph unlock["🔑 Unlock device — trusted"]
+        pass["passphrases<br/>(stored only here)"] -.-> cli["zfs-unlock unlock"]
+    end
+
+    subgraph host["🗄️ ZFS host — encrypted data only"]
+        recv["restricted receiver<br/>status · unlock · lock"] --> allow{"allowlist<br/>check"}
+        allow -->|allowed| load["zfs load-key<br/>+ mount"]
+    end
+
+    cli ==>|"passphrase over restricted SSH<br/>(only when the host is reachable)"| recv
+```
+
 Nix is optional: the Python CLI and the SSH receiver run anywhere, and the included NixOS modules simply automate the setup when you want it.
 
 ## Security model
