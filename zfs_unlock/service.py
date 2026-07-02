@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import os
 import platform
+import shlex
 import shutil
+import subprocess
 from pathlib import Path
 from typing import Annotated
 
@@ -13,6 +15,19 @@ import typer
 from .config import find_config
 from .output import console, err_console
 from .process import run_process
+
+
+def _run_or_exit(cmd: list[str]) -> None:
+    """Run a required setup command, exiting with its stderr on failure."""
+    try:
+        run_process(cmd)
+    except subprocess.CalledProcessError as exc:
+        err_console.print(f"[red]Command failed:[/red] {shlex.join(cmd)}")
+        stderr = (exc.stderr or "").strip()
+        if stderr:
+            err_console.print(stderr)
+        raise typer.Exit(1) from exc
+
 
 _SYSTEMD_SERVICE = """\
 [Unit]
@@ -102,7 +117,7 @@ def _install_macos(uv_path: Path) -> None:
     log_dir.mkdir(parents=True, exist_ok=True)
     plist_dst.parent.mkdir(parents=True, exist_ok=True)
     plist_dst.write_text(_LAUNCHD_PLIST.format(uv_path=uv_path, home=Path.home(), log_dir=log_dir))
-    run_process(["launchctl", "load", str(plist_dst)])
+    _run_or_exit(["launchctl", "load", str(plist_dst)])
 
     console.print("[green]OK[/green] Service installed and started")
     console.print(f"  Logs: {log_dir}/")
@@ -119,8 +134,8 @@ def _install_linux(uv_path: Path) -> None:
     current_path = os.environ.get("PATH", "/usr/bin:/bin")
     service_dst.write_text(_SYSTEMD_SERVICE.format(uv_path=uv_path, path=current_path))
 
-    run_process(["systemctl", "--user", "daemon-reload"])
-    run_process(["systemctl", "--user", "enable", "--now", "zfs-unlock"])
+    _run_or_exit(["systemctl", "--user", "daemon-reload"])
+    _run_or_exit(["systemctl", "--user", "enable", "--now", "zfs-unlock"])
 
     console.print("[green]OK[/green] Service installed and started")
     console.print("\n  View logs: [bold]journalctl --user -u zfs-unlock -f[/bold]")
@@ -163,7 +178,7 @@ def _uninstall_linux() -> None:
     run_process(["systemctl", "--user", "stop", "zfs-unlock"], check=False)
     run_process(["systemctl", "--user", "disable", "zfs-unlock"], check=False)
     service_dst.unlink()
-    run_process(["systemctl", "--user", "daemon-reload"])
+    _run_or_exit(["systemctl", "--user", "daemon-reload"])
     console.print("[green]OK[/green] Service uninstalled")
 
 

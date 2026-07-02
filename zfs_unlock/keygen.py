@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shutil
+import subprocess
 from pathlib import Path
 from typing import Annotated
 
@@ -34,7 +35,11 @@ def keygen(
         raise typer.Exit(1)
 
     identity_path.parent.mkdir(parents=True, exist_ok=True)
-    run_process([ssh_keygen, "-t", "ed25519", "-N", "", "-C", comment, "-f", str(identity_path)])
+    try:
+        run_process([ssh_keygen, "-t", "ed25519", "-N", "", "-C", comment, "-f", str(identity_path)])
+    except subprocess.CalledProcessError as exc:
+        err_console.print(f"[red]ssh-keygen failed:[/red] {(exc.stderr or '').strip() or exc}")
+        raise typer.Exit(1) from exc
     identity_path.chmod(0o600)
     public_path.chmod(0o644)
 
