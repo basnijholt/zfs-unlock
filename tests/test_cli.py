@@ -185,6 +185,18 @@ def test_cli_malformed_yaml_reports_clean_error(tmp_path: Path) -> None:
     assert "Invalid config" in result.stderr
 
 
+def test_cli_malformed_yaml_does_not_echo_secrets(tmp_path: Path) -> None:
+    """YAML syntax errors never echo the offending line: it may hold a passphrase."""
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("host: zfs-host.example.lan\ndatasets:\n  tank/x: TOPSECRET_PASSPHRASE: oops\n")
+
+    result = runner.invoke(app, ["unlock", "--config", str(config_file)])
+
+    assert result.exit_code == 1
+    assert "Invalid config: YAML syntax error at line 3" in result.stderr
+    assert "TOPSECRET_PASSPHRASE" not in result.stderr
+
+
 def test_cli_with_config(tmp_path: Path) -> None:
     """Test CLI runs with config file."""
     config_file = tmp_path / "config.yaml"
