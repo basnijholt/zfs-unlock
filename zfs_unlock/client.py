@@ -59,6 +59,12 @@ class ZfsUnlockClient:
             str(self.config.port),
             "-o",
             "BatchMode=yes",
+            # Passphrase secrecy depends on host-key pinning, so an unknown or
+            # changed host key must fail closed even when the user's ssh_config
+            # says accept-new/no — command-line options beat ssh_config, and
+            # with BatchMode "ask" means refuse rather than prompt.
+            "-o",
+            "StrictHostKeyChecking=ask",
             "-o",
             f"ConnectTimeout={self.config.connect_timeout}",
         ]
