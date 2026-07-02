@@ -12,7 +12,6 @@ SSH_CONNECTION_ERROR_RETURNCODE = 255
 
 # The receiver runs as root; bound what an SSH client can make it read.
 MAX_PASSPHRASE_BYTES = 64 * 1024
-RECEIVER_STDIN_TIMEOUT_SECONDS = 30.0
 
 CONFIG_SEARCH_PATHS = [
     Path("config.yaml"),

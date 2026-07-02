@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import sys
 from typing import TYPE_CHECKING
-from unittest.mock import patch
 
 from zfs_unlock.client import SubprocessRunner, ZfsUnlockClient
 from zfs_unlock.config import Config, Dataset
@@ -18,10 +17,7 @@ from zfs_unlock.process import CommandResult
 if TYPE_CHECKING:
     from pathlib import Path
 
-    import pytest
-
 CUSTOM_SSH_PORT = 2222
-PRIVATE_DIR_MODE = 0o700
 
 
 class RecordingRunner:
@@ -58,8 +54,7 @@ def test_run_remote_builds_ssh_command_with_identity_file(tmp_path: Path) -> Non
         datasets=[],
     )
     runner = RecordingRunner(CommandResult(returncode=0, stdout="unlocked\n", stderr=""))
-    with patch("zfs_unlock.client._ssh_control_dir", return_value=None):
-        client = ZfsUnlockClient(config, runner=runner)
+    client = ZfsUnlockClient(config, runner=runner)
 
     result = asyncio.run(client.run_remote(["status", "tank/photos"]))
 
@@ -86,44 +81,6 @@ def test_run_remote_builds_ssh_command_with_identity_file(tmp_path: Path) -> Non
             12,
         ),
     ]
-
-
-def test_ssh_args_enable_multiplexing_in_private_control_dir(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """SSH connection reuse keeps its control sockets in a 0700 directory."""
-    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
-    config = Config(host="zfs-host.example.lan", datasets=[])
-    runner = RecordingRunner()
-    client = ZfsUnlockClient(config, runner=runner)
-
-    asyncio.run(client.run_remote(["status", "tank/photos"]))
-
-    control_dir = tmp_path / "zfs-unlock"
-    assert control_dir.is_dir()
-    assert control_dir.stat().st_mode & 0o777 == PRIVATE_DIR_MODE
-    args = runner.calls[0][0]
-    assert "ControlMaster=auto" in args
-    assert f"ControlPath={control_dir}/%C" in args
-    assert "ControlPersist=15s" in args
-
-
-def test_ssh_args_skip_multiplexing_without_private_dir(monkeypatch: pytest.MonkeyPatch) -> None:
-    """No multiplexing options are used when no private control dir exists."""
-    monkeypatch.setenv("XDG_RUNTIME_DIR", "/nonexistent/no-permission/here")
-    monkeypatch.setattr("pathlib.Path.mkdir", _raise_oserror)
-    config = Config(host="zfs-host.example.lan", datasets=[])
-    runner = RecordingRunner()
-    client = ZfsUnlockClient(config, runner=runner)
-
-    asyncio.run(client.run_remote(["status", "tank/photos"]))
-
-    assert not any("ControlMaster" in arg for arg in runner.calls[0][0])
-
-
-def _raise_oserror(*_args: object, **_kwargs: object) -> None:
-    raise OSError
 
 
 def test_unlock_keeps_stdin_open_for_passphrase() -> None:
@@ -189,8 +146,7 @@ def test_unlock_sends_passphrase_over_stdin() -> None:
     """Unlock sends the dataset passphrase to the receiver over stdin."""
     config = Config(host="zfs-host.example.lan", datasets=[Dataset(path="tank/photos", secret="secret-pass")])
     runner = RecordingRunner(CommandResult(returncode=0, stdout="unlocked tank/photos\n", stderr=""))
-    with patch("zfs_unlock.client._ssh_control_dir", return_value=None):
-        client = ZfsUnlockClient(config, runner=runner)
+    client = ZfsUnlockClient(config, runner=runner)
 
     assert asyncio.run(client.unlock(config.datasets[0])) is True
 
