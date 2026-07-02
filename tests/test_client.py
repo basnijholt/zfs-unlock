@@ -168,13 +168,21 @@ def test_is_locked_maps_receiver_status() -> None:
         CommandResult(returncode=0, stdout="locked\n", stderr=""),
         CommandResult(returncode=0, stdout="unlocked\n", stderr=""),
         CommandResult(returncode=1, stdout="", stderr="boom"),
+        CommandResult(returncode=255, stdout="", stderr="Connection refused"),
     )
     client = ZfsUnlockClient(config, runner=runner)
     dataset = config.datasets[0]
 
-    assert asyncio.run(client.is_locked(dataset)) is True
-    assert asyncio.run(client.is_locked(dataset)) is False
-    assert asyncio.run(client.is_locked(dataset)) is None
+    assert asyncio.run(client.is_locked(dataset)).locked is True
+    assert asyncio.run(client.is_locked(dataset)).locked is False
+
+    receiver_error = asyncio.run(client.is_locked(dataset))
+    assert receiver_error.locked is None
+    assert receiver_error.connection_error is False
+
+    connection_error = asyncio.run(client.is_locked(dataset))
+    assert connection_error.locked is None
+    assert connection_error.connection_error is True
 
 
 def test_unlock_sends_passphrase_over_stdin() -> None:
