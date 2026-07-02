@@ -303,6 +303,15 @@ def test_nix_package_version_comes_from_committed_version_file() -> None:
     assert not data["actual"].startswith("0.0.0+")
 
 
+def test_nix_modules_require_explicit_package() -> None:
+    """Raw modules must not fall back to resolving zfs-unlock from PyPI at runtime."""
+    repo = Path(__file__).resolve().parents[1]
+    for name in ("nixos-module.nix", "client-module.nix"):
+        module = (repo / "nix" / name).read_text()
+        assert "uv tool run" not in module, name
+        assert "default = pkgs.writeShellScriptBin" not in module, name
+
+
 def test_nixos_receiver_wrapper_uses_setuid_sudo_wrapper() -> None:
     """The forced SSH command must call NixOS's setuid sudo wrapper."""
     repo = Path(__file__).resolve().parents[1]

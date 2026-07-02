@@ -595,6 +595,80 @@ def test_keygen_creates_unlock_key(tmp_path: Path) -> None:
     assert Path(f"{key_path}.pub").exists()
 
 
+def test_service_install_linux_pins_current_executable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Service install writes a unit that runs the installed zfs-unlock binary."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    which = {"zfs-unlock": "/usr/local/bin/zfs-unlock"}
+    with (
+        patch("zfs_unlock.service.platform.system", return_value="Linux"),
+        patch("zfs_unlock.service.shutil.which", side_effect=which.get),
+        patch("zfs_unlock.service.run_process") as mock_run,
+    ):
+        result = runner.invoke(app, ["service", "install"])
+
+    assert result.exit_code == 0
+    unit = (tmp_path / ".config" / "systemd" / "user" / "zfs-unlock.service").read_text()
+    assert "ExecStart=/usr/local/bin/zfs-unlock unlock --daemon\n" in unit
+    assert "tool run" not in unit
+    assert mock_run.call_count == 2  # noqa: PLR2004
+
+
+def test_service_install_macos_pins_current_executable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Service install writes a launchd plist that runs the installed binary."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    which = {"zfs-unlock": "/usr/local/bin/zfs-unlock"}
+    with (
+        patch("zfs_unlock.service.platform.system", return_value="Darwin"),
+        patch("zfs_unlock.service.shutil.which", side_effect=which.get),
+        patch("zfs_unlock.service.run_process"),
+    ):
+        result = runner.invoke(app, ["service", "install"])
+
+    assert result.exit_code == 0
+    plist = (tmp_path / "Library" / "LaunchAgents" / "com.zfs_unlock.plist").read_text()
+    assert "    <string>/usr/local/bin/zfs-unlock</string>\n    <string>unlock</string>" in plist
+    assert "tool" not in plist
+
+
+def test_service_install_falls_back_to_uv_with_warning(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without zfs-unlock on PATH the service falls back to uv tool run."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    which = {"uv": "/opt/uv/bin/uv"}
+    with (
+        patch("zfs_unlock.service.platform.system", return_value="Linux"),
+        patch("zfs_unlock.service.shutil.which", side_effect=which.get),
+        patch("zfs_unlock.service.run_process"),
+    ):
+        result = runner.invoke(app, ["service", "install"])
+
+    assert result.exit_code == 0
+    assert "zfs-unlock not found on PATH" in ANSI_RE.sub("", result.output)
+    unit = (tmp_path / ".config" / "systemd" / "user" / "zfs-unlock.service").read_text()
+    assert "ExecStart=/opt/uv/bin/uv tool run zfs-unlock unlock --daemon\n" in unit
+
+
+def test_service_install_fails_without_executable_or_uv(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Service install fails cleanly when nothing can run the daemon."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    with (
+        patch("zfs_unlock.service.platform.system", return_value="Linux"),
+        patch("zfs_unlock.service.shutil.which", return_value=None),
+    ):
+        result = runner.invoke(app, ["service", "install"])
+
+    assert result.exit_code == 1
+    assert "neither zfs-unlock nor uv found" in ANSI_RE.sub("", result.output)
+
+
 def test_service_status_linux() -> None:
     """Service status checks systemd user unit on Linux."""
     with patch("platform.system", return_value="Linux"), patch("zfs_unlock.service.run_process") as mock_run:

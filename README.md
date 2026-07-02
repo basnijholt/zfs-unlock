@@ -258,7 +258,8 @@ zfs-unlock --help
 ## Running as a Service
 
 On NixOS, prefer the `services.zfsUnlock.client` module shown above.
-The portable CLI installer requires [uv](https://docs.astral.sh/uv/) and auto-detects Linux (systemd) or macOS (launchd):
+The portable CLI installer auto-detects Linux (systemd) or macOS (launchd) and pins the service to the `zfs-unlock` executable currently on `PATH`, so the daemon always runs the same version you installed.
+If `zfs-unlock` is not on `PATH`, it falls back to launching the latest release through [uv](https://docs.astral.sh/uv/).
 
 ```bash
 # Install and start

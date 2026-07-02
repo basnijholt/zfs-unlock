@@ -41,11 +41,14 @@ in
 
     package = lib.mkOption {
       type = lib.types.package;
-      default = pkgs.writeShellScriptBin "zfs-unlock" ''
-        exec ${pkgs.uv}/bin/uv tool run zfs-unlock "$@"
+      description = ''
+        Package providing the zfs-unlock executable.
+
+        The flake's nixosModules.receiver defaults this to the pinned zfs-unlock
+        package. When importing nix/nixos-module.nix directly, set it explicitly:
+        the receiver runs as root via sudo and must not resolve or download its
+        code at runtime.
       '';
-      defaultText = lib.literalExpression ''pkgs.writeShellScriptBin "zfs-unlock" "exec \${pkgs.uv}/bin/uv tool run zfs-unlock \"$@\""'';
-      description = "Package providing the zfs-unlock executable.";
     };
 
     zfsPackage = lib.mkOption {
