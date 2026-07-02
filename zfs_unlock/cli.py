@@ -47,6 +47,16 @@ def _single_receiver_option(
     default: _T,
     flag: str,
 ) -> _T:
+    """Resolve a receiver option that a wrapper may pin, rejecting duplicates.
+
+    The SSH wrapper invokes ``receiver`` with pinned options and appends the
+    attacker-controlled ``SSH_ORIGINAL_COMMAND`` after them. Click resolves a
+    repeated single-valued option as last-wins, which would let that suffix
+    replace the pinned value. Every security-relevant receiver option must
+    therefore be declared as ``list[X] | None`` (so repeats accumulate instead
+    of overwriting) and be resolved through this helper, which exits if the
+    option was given more than once.
+    """
     if values is None:
         return default
     if isinstance(values, list | tuple):
@@ -184,6 +194,10 @@ def _receiver(
     ] = None,
 ) -> None:
     """Run the restricted receiver."""
+    # These options are pinned by the SSH wrapper, which appends untrusted
+    # input after them. They must stay list-typed and go through
+    # _single_receiver_option so a duplicate cannot override the pinned value;
+    # any new receiver option needs the same treatment.
     resolved_allow_file = _single_receiver_option(
         allow_file,
         default=_DEFAULT_RECEIVER_ALLOW_FILE,
