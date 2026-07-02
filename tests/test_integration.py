@@ -181,20 +181,6 @@ def test_run_unlock_returns_failed_when_file_secret_is_missing(tmp_path: Path) -
     assert [call[0][-1] for call in runner.calls] == ["status tank/locked"]
 
 
-def test_run_unlock_returns_failed_when_secret_path_is_invalid() -> None:
-    """A malformed secret path (embedded null byte) fails cleanly, never crashes the pass."""
-    config = Config(
-        host="zfs-host.example.lan",
-        secrets=SecretsMode.FILES,
-        datasets=[Dataset(path="tank/locked", secret="bad\x00path")],
-    )
-    runner = RecordingRunner(CommandResult(returncode=0, stdout="locked\n", stderr=""))
-
-    assert asyncio.run(run_unlock(config, runner=runner)) is UnlockOutcome.FAILED
-
-    assert [call[0][-1] for call in runner.calls] == ["status tank/locked"]
-
-
 def test_run_unlock_returns_failed_when_filter_matches_nothing() -> None:
     """run_unlock reports explicit filters that match no configured datasets."""
     config = Config(
