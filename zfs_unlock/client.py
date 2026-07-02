@@ -96,6 +96,11 @@ def filter_datasets(datasets: list[Dataset], filters: list[str] | None) -> list[
 
     Exact-or-glob (not substring) so `-D tank/photo` can never also select
     `tank/photos` — surprising for `unlock`, dangerous for `lock --force`.
+
+    Unlike shell globs, fnmatch's `*` also matches across `/`: `tank/*`
+    selects every configured dataset under tank, nested children included.
+    That is the useful semantic for dataset trees, but it must stay
+    documented in the README alongside this comment.
     """
     if not filters:
         return datasets
