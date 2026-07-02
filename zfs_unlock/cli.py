@@ -7,7 +7,7 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, TypeVar
 
 import typer
 
@@ -35,6 +35,28 @@ app = typer.Typer(
     add_completion=False,
     context_settings={"help_option_names": ["-h", "--help"]},
 )
+
+_DEFAULT_RECEIVER_ALLOW_FILE = Path("/etc/zfs-unlock/allowed-datasets")
+_DEFAULT_RECEIVER_ZFS_PATH = "zfs"
+_T = TypeVar("_T")
+
+
+def _single_receiver_option(
+    values: _T | list[_T] | tuple[_T, ...] | None,
+    *,
+    default: _T,
+    flag: str,
+) -> _T:
+    if values is None:
+        return default
+    if isinstance(values, list | tuple):
+        if len(values) > 1:
+            sys.stderr.write(f"duplicate receiver option: {flag}\n")
+            raise typer.Exit(1)
+        if not values:
+            return default
+        return values[0]
+    return values
 
 
 def _unlock(
@@ -153,15 +175,26 @@ def _read_passphrase(limit: int) -> str | None:
 def _receiver(
     ctx: typer.Context,
     allow_file: Annotated[
-        Path,
+        list[Path] | None,
         typer.Option("--allow-file", help="File containing allowed dataset names"),
-    ] = Path("/etc/zfs-unlock/allowed-datasets"),
+    ] = None,
     zfs_path: Annotated[
-        str,
+        list[str] | None,
         typer.Option("--zfs-path", help="Path to the zfs executable"),
-    ] = "zfs",
+    ] = None,
 ) -> None:
     """Run the restricted receiver."""
+    resolved_allow_file = _single_receiver_option(
+        allow_file,
+        default=_DEFAULT_RECEIVER_ALLOW_FILE,
+        flag="--allow-file",
+    )
+    resolved_zfs_path = _single_receiver_option(
+        zfs_path,
+        default=_DEFAULT_RECEIVER_ZFS_PATH,
+        flag="--zfs-path",
+    )
+
     try:
         args = list(ctx.args)
         if len(args) == 1:
@@ -173,7 +206,7 @@ def _receiver(
         sys.stderr.write(f"invalid receiver command: {exc}\n")
         raise typer.Exit(1) from exc
 
-    receiver_instance = Receiver(allow_file=allow_file, zfs_path=zfs_path)
+    receiver_instance = Receiver(allow_file=resolved_allow_file, zfs_path=resolved_zfs_path)
     request = receiver_instance.parse(args)
     if isinstance(request, CommandResult):
         response = request
