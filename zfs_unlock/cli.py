@@ -78,7 +78,7 @@ def _run_daemon(config: Config, *, interval: int, dry_run: bool, dataset: list[s
             outcome = asyncio.run(run_unlock(config, dry_run=dry_run, quiet=True, dataset_filters=dataset))
             if outcome is UnlockOutcome.UNREACHABLE:
                 if reachable:
-                    console.print("[yellow]Receiver unreachable. Switching to panic mode (1s interval).[/yellow]")
+                    console.print(f"[yellow]Receiver unreachable. Switching to panic mode ({PANIC_INTERVAL_SECONDS}s interval).[/yellow]")
                     panic_elapsed = 0
                 if panic_elapsed < PANIC_MODE_MAX_SECONDS:
                     current_interval = PANIC_INTERVAL_SECONDS
