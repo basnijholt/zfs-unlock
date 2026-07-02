@@ -101,11 +101,13 @@
             ];
           };
           allowedDatasets = pkgs.writeText "allowed-datasets" eval.config.environment.etc."zfs-unlock/allowed-datasets".text;
+          sudoers = pkgs.writeText "sudoers" eval.config.security.sudo.configFile;
         in
         {
           receiverModule = pkgs.runCommand "zfs-unlock-receiver-module-check" { } ''
             grep -qx "tank/photos" ${allowedDatasets}
             grep -qx "tank/syncthing" ${allowedDatasets}
+            grep -qE '^zfs-unlock[[:space:]]+ALL=\(root:root\)[[:space:]]+NOPASSWD:' ${sudoers}
             touch "$out"
           '';
         }
