@@ -23,8 +23,13 @@ class SecretsMode(StrEnum):
 
 
 def _read_secret_file(path: Path) -> str:
-    """Read a text secret file while preserving intentional spaces."""
-    return path.read_text().rstrip("\r\n")
+    """Read a text secret file while preserving intentional spaces.
+
+    Always UTF-8: the passphrase is encoded as UTF-8 on the wire and decoded as
+    UTF-8 by the receiver, so a locale-dependent read (e.g. LANG=C) would
+    corrupt or reject a correct secret.
+    """
+    return path.read_text(encoding="utf-8").rstrip("\r\n")
 
 
 def _resolve_secret(value: str, mode: SecretsMode) -> str:
@@ -82,8 +87,10 @@ class Config(BaseModel):
     user: str = "zfs-unlock"
     port: Annotated[int, Field(ge=1, le=65535)] = 22
     identity_file: Path | None = None
-    connect_timeout: Annotated[int, Field(gt=0)] = 5
-    command_timeout: Annotated[float, Field(gt=0)] = 30
+    # Bounded above so YAML `.inf` (or an absurd value) cannot disable the
+    # timeout and wedge the daemon poll loop on a hung receiver.
+    connect_timeout: Annotated[int, Field(gt=0, le=3600)] = 5
+    command_timeout: Annotated[float, Field(gt=0, le=3600)] = 30
     secrets: SecretsMode = SecretsMode.AUTO
     datasets: list[Dataset] = Field(default_factory=list)
 

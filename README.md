@@ -105,6 +105,8 @@ Add the printed public key to the receiver host's `authorizedKeys` list below, t
 host: zfs-host.example.lan
 user: zfs-unlock
 identity_file: ~/.ssh/zfs-unlock-receiver
+# port: 22
+# connect_timeout: 5
 # command_timeout: 30
 
 # secrets: auto  # auto (default) | files | inline

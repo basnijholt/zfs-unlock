@@ -18,7 +18,8 @@ Run as a daemon:
 zfs-unlock unlock --daemon
 ```
 
-The daemon checks every 1 second while the receiver host is unreachable, then every 30 seconds after a reachable check.
+The daemon checks every 1 second while the receiver host is unreachable, for up to about 5 minutes.
+After that it backs off to the relaxed interval (default 30 seconds), which is also used after a reachable check.
 Use `--interval` to change the relaxed interval:
 
 ```bash
@@ -70,6 +71,8 @@ Unmount clients or stop exports first, then retry the lock.
 host: zfs-host.example.lan
 user: zfs-unlock
 identity_file: ~/.ssh/zfs-unlock-receiver
+port: 22
+connect_timeout: 5
 command_timeout: 30
 secrets: auto
 

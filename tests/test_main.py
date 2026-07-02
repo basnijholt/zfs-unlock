@@ -239,6 +239,45 @@ def test_receiver_status_maps_keystatus(tmp_path: Path) -> None:
     ]
 
 
+def test_receiver_status_reports_available_key_as_unlocked(tmp_path: Path) -> None:
+    """An available ZFS key maps to the client status word `unlocked`."""
+    allow_file = write_allowlist(tmp_path, "tank/photos")
+    runner = RecordingLocalRunner(CommandResult(returncode=0, stdout="available\n", stderr=""))
+    receiver = Receiver(allow_file=allow_file, runner=runner)
+
+    response = handle_request(receiver, "status", "tank/photos")
+
+    assert response.returncode == 0
+    assert response.stdout == "unlocked\n"
+
+
+def test_receiver_status_reports_unrecognized_keystatus_as_unknown(tmp_path: Path) -> None:
+    """A keystatus outside available/unavailable maps to `unknown`, not a guess."""
+    allow_file = write_allowlist(tmp_path, "tank/photos")
+    runner = RecordingLocalRunner(CommandResult(returncode=0, stdout="none\n", stderr=""))
+    receiver = Receiver(allow_file=allow_file, runner=runner)
+
+    response = handle_request(receiver, "status", "tank/photos")
+
+    assert response.returncode == 0
+    assert response.stdout == "unknown\n"
+
+
+def test_receiver_status_propagates_keystatus_failure(tmp_path: Path) -> None:
+    """A failing zfs get surfaces as a nonzero exit with its stderr."""
+    allow_file = write_allowlist(tmp_path, "tank/photos")
+    runner = RecordingLocalRunner(
+        CommandResult(returncode=1, stdout="", stderr="cannot open 'tank/photos': dataset does not exist\n"),
+    )
+    receiver = Receiver(allow_file=allow_file, runner=runner)
+
+    response = handle_request(receiver, "status", "tank/photos")
+
+    assert response.returncode == 1
+    assert response.stdout == ""
+    assert "dataset does not exist" in response.stderr
+
+
 def test_receiver_unlock_loads_key_from_stdin_and_mounts_subtree(tmp_path: Path) -> None:
     """Receiver unlocks with stdin passphrase and mounts only the target subtree."""
     allow_file = write_allowlist(tmp_path, "tank/photos")

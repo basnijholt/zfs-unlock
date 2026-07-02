@@ -30,18 +30,38 @@ def keygen(
 
     identity_path = identity_file.expanduser()
     public_path = Path(f"{identity_path}.pub")
-    if not overwrite and (identity_path.exists() or public_path.exists()):
+    if (identity_path.exists() or public_path.exists()) and not overwrite:
         err_console.print(f"[red]Refusing to overwrite existing key: {identity_path}[/red]")
         raise typer.Exit(1)
 
     identity_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    # Generate into temporary siblings and rename into place only on success,
+    # so a failed ssh-keygen (disk full, permissions, ...) never destroys the
+    # existing key pair. The fresh temp paths also sidestep ssh-keygen's
+    # "Overwrite (y/n)?" stdout prompt, which fails without a terminal.
+    tmp_identity = identity_path.with_name(f"{identity_path.name}.keygen-tmp")
+    tmp_public = Path(f"{tmp_identity}.pub")
+    tmp_identity.unlink(missing_ok=True)  # leftovers from an interrupted run
+    tmp_public.unlink(missing_ok=True)
     try:
-        run_process([ssh_keygen, "-t", "ed25519", "-N", "", "-C", comment, "-f", str(identity_path)])
+        run_process([ssh_keygen, "-t", "ed25519", "-N", "", "-C", comment, "-f", str(tmp_identity)])
+        tmp_identity.chmod(0o600)
+        tmp_public.chmod(0o644)
+        tmp_identity.replace(identity_path)
+        tmp_public.replace(public_path)
     except subprocess.CalledProcessError as exc:
-        err_console.print(f"[red]ssh-keygen failed:[/red] {(exc.stderr or '').strip() or exc}")
+        detail = (exc.stderr or "").strip() or (exc.stdout or "").strip() or exc
+        err_console.print(f"[red]ssh-keygen failed:[/red] {detail}")
         raise typer.Exit(1) from exc
-    identity_path.chmod(0o600)
-    public_path.chmod(0o644)
+    except OSError as exc:
+        # chmod/replace failed after generation; the private key is renamed
+        # before the public one, so on a partial install the private key wins
+        # and the stale .pub can be regenerated with `ssh-keygen -y`.
+        err_console.print(f"[red]Failed to install the new key pair:[/red] {exc}")
+        raise typer.Exit(1) from exc
+    finally:
+        tmp_identity.unlink(missing_ok=True)
+        tmp_public.unlink(missing_ok=True)
 
     public_key = public_path.read_text().strip()
     print_ok(f"created {identity_path}")

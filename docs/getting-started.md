@@ -47,6 +47,8 @@ Create `~/.config/zfs-unlock/config.yaml` on the unlock device:
 host: zfs-host.example.lan
 user: zfs-unlock
 identity_file: ~/.ssh/zfs-unlock-receiver
+# port: 22
+# connect_timeout: 5
 # command_timeout: 30
 
 # secrets: auto  # auto (default) | files | inline

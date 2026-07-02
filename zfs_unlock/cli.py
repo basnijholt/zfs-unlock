@@ -103,7 +103,10 @@ def _run_daemon(config: Config, *, interval: int, dry_run: bool, dataset: list[s
     """
     current_interval = interval
     reachable = True
-    panic_elapsed = 0
+    # Wall-clock deadline, not a sum of nominal intervals: each unreachable
+    # probe also blocks for up to connect_timeout, which iteration counting
+    # would ignore, stretching the cap ~6x past PANIC_MODE_MAX_SECONDS.
+    panic_started = 0.0
 
     while True:
         try:
@@ -114,8 +117,8 @@ def _run_daemon(config: Config, *, interval: int, dry_run: bool, dataset: list[s
                         f"[yellow]Receiver unreachable. Switching to panic mode"
                         f" ({PANIC_INTERVAL_SECONDS}s interval).[/yellow]",
                     )
-                    panic_elapsed = 0
-                if panic_elapsed < PANIC_MODE_MAX_SECONDS:
+                    panic_started = time.monotonic()
+                if time.monotonic() - panic_started < PANIC_MODE_MAX_SECONDS:
                     current_interval = PANIC_INTERVAL_SECONDS
                 else:
                     if current_interval != interval:
@@ -124,14 +127,12 @@ def _run_daemon(config: Config, *, interval: int, dry_run: bool, dataset: list[s
                             f" backing off to {interval}s.[/yellow]",
                         )
                     current_interval = interval
-                panic_elapsed += current_interval
             else:
                 if not reachable and outcome is UnlockOutcome.OK:
                     console.print("[green]Connection restored.[/green]")
                 elif not reachable:
                     console.print("[yellow]Receiver reachable again, but the unlock pass failed.[/yellow]")
                 current_interval = interval
-                panic_elapsed = 0
 
             reachable = outcome is not UnlockOutcome.UNREACHABLE
             time.sleep(current_interval)

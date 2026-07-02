@@ -107,7 +107,7 @@ class ZfsUnlockClient:
         """Unlock a dataset by sending its passphrase to the receiver."""
         try:
             passphrase = dataset.get_passphrase(self.config.secrets)
-        except OSError as exc:
+        except (OSError, UnicodeDecodeError) as exc:
             err_console.print(f"[red]secret failed for {dataset.path}: {exc}[/red]")
             return False
 
