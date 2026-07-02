@@ -17,7 +17,7 @@ from zfs_unlock.constants import (
     COMMAND_TIMEOUT_RETURNCODE,
     SSH_CONNECTION_ERROR_RETURNCODE,
 )
-from zfs_unlock.process import CommandResult
+from zfs_unlock.process import CommandResult, _drain_killed_process
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -201,6 +201,31 @@ def test_subprocess_runner_timeout_returns_despite_inherited_pipe(monkeypatch: p
 
     assert result.returncode == COMMAND_TIMEOUT_RETURNCODE
     assert elapsed < 10, "post-kill drain must be bounded, not wait for the grandchild"  # noqa: PLR2004
+
+
+def test_drain_killed_process_bounds_fallback_wait(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Even the post-kill wait() fallback is bounded, so an unkillable child cannot stall.
+
+    A child stuck in an uninterruptible kernel sleep (e.g. a hung NFS mount)
+    survives SIGKILL indefinitely; both drain stages must give up on it.
+    """
+    monkeypatch.setattr("zfs_unlock.process._KILL_DRAIN_TIMEOUT", 0.05)
+
+    class UnkillableProcess:
+        async def communicate(self) -> tuple[bytes, bytes]:
+            await asyncio.Event().wait()
+            raise AssertionError
+
+        async def wait(self) -> int:
+            await asyncio.Event().wait()
+            raise AssertionError
+
+    start = time.monotonic()
+    stdout, stderr = asyncio.run(_drain_killed_process(UnkillableProcess()))  # type: ignore[arg-type]
+    elapsed = time.monotonic() - start
+
+    assert (stdout, stderr) == (b"", b"")
+    assert elapsed < 5, "drain must return once both bounded stages expire"  # noqa: PLR2004
 
 
 def test_subprocess_runner_returns_error_for_missing_executable() -> None:

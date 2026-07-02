@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import subprocess
 from dataclasses import dataclass
 from typing import Protocol
@@ -20,7 +21,11 @@ async def _drain_killed_process(process: asyncio.subprocess.Process) -> tuple[by
     try:
         return await asyncio.wait_for(process.communicate(), timeout=_KILL_DRAIN_TIMEOUT)
     except TimeoutError:
-        await process.wait()
+        # wait() is normally instant after SIGKILL, but a child stuck in an
+        # uninterruptible kernel sleep (e.g. a hung NFS mount) never dies, so
+        # bound this too rather than reintroduce unbounded blocking here.
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(process.wait(), timeout=_KILL_DRAIN_TIMEOUT)
         return b"", b""
 
 
