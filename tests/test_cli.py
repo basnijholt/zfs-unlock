@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,9 +12,10 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
-from zfs_unlock.cli import _receiver, app
-from zfs_unlock.client import filter_datasets
+from zfs_unlock.cli import _read_stdin_limited, _receiver, app
+from zfs_unlock.client import UnlockOutcome, filter_datasets
 from zfs_unlock.config import Dataset, find_config
+from zfs_unlock.constants import MAX_PASSPHRASE_BYTES
 
 runner = CliRunner()
 DAEMON_RUN_CALLS = 3
@@ -187,9 +189,9 @@ def test_cli_with_config(tmp_path: Path) -> None:
     config_file.write_text("host: test\ndatasets:\n  tank/ds: pass")
     calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
 
-    async def fake_run_unlock(*args: object, **kwargs: object) -> bool:
+    async def fake_run_unlock(*args: object, **kwargs: object) -> UnlockOutcome:
         calls.append((args, kwargs))
-        return True
+        return UnlockOutcome.OK
 
     with patch("zfs_unlock.cli.run_unlock", new=fake_run_unlock):
         result = runner.invoke(app, ["unlock", "--config", str(config_file)])
@@ -198,13 +200,14 @@ def test_cli_with_config(tmp_path: Path) -> None:
     assert len(calls) == 1
 
 
-def test_cli_unlock_exits_nonzero_when_run_fails(tmp_path: Path) -> None:
+@pytest.mark.parametrize("outcome", [UnlockOutcome.FAILED, UnlockOutcome.UNREACHABLE])
+def test_cli_unlock_exits_nonzero_when_run_fails(tmp_path: Path, outcome: UnlockOutcome) -> None:
     """The unlock command reflects failed unlock work in its exit code."""
     config_file = tmp_path / "config.yaml"
     config_file.write_text("host: test\ndatasets:\n  tank/ds: pass")
 
-    async def fake_run_unlock(*_args: object, **_kwargs: object) -> bool:
-        return False
+    async def fake_run_unlock(*_args: object, **_kwargs: object) -> UnlockOutcome:
+        return outcome
 
     with patch("zfs_unlock.cli.run_unlock", new=fake_run_unlock):
         result = runner.invoke(app, ["unlock", "--config", str(config_file)])
@@ -213,7 +216,7 @@ def test_cli_unlock_exits_nonzero_when_run_fails(tmp_path: Path) -> None:
 
 
 def test_cli_daemon_mode(tmp_path: Path) -> None:
-    """Test CLI daemon smart polling loop."""
+    """Daemon polls fast only while the receiver is unreachable."""
     config_file = tmp_path / "config.yaml"
     config_file.write_text("host: test\ndatasets:\n  tank/ds: pass")
 
@@ -223,13 +226,52 @@ def test_cli_daemon_mode(tmp_path: Path) -> None:
         patch("asyncio.run") as mock_run,
         patch("time.sleep") as mock_sleep,
     ):
-        mock_run.side_effect = [True, False, KeyboardInterrupt]
+        mock_run.side_effect = [UnlockOutcome.OK, UnlockOutcome.UNREACHABLE, KeyboardInterrupt]
         result = runner.invoke(app, ["unlock", "--config", str(config_file), "--daemon", "--interval", "10"])
 
     assert result.exit_code == 0
     assert mock_run.call_count == DAEMON_RUN_CALLS
     mock_sleep.assert_any_call(10)
     mock_sleep.assert_any_call(1)
+
+
+def test_cli_daemon_does_not_claim_restored_on_failed_pass(tmp_path: Path) -> None:
+    """Recovering reachability with a still-failing pass must not print success."""
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("host: test\ndatasets:\n  tank/ds: pass")
+
+    fake_run_unlock = MagicMock(return_value=object())
+    with (
+        patch("zfs_unlock.cli.run_unlock", new=fake_run_unlock),
+        patch("asyncio.run") as mock_run,
+        patch("time.sleep"),
+    ):
+        mock_run.side_effect = [UnlockOutcome.UNREACHABLE, UnlockOutcome.FAILED, KeyboardInterrupt]
+        result = runner.invoke(app, ["unlock", "--config", str(config_file), "--daemon"])
+
+    stdout = ANSI_RE.sub("", result.stdout)
+    assert result.exit_code == 0
+    assert "Connection restored" not in stdout
+    assert "reachable again, but the unlock pass failed" in stdout
+
+
+def test_cli_daemon_keeps_normal_interval_on_non_connection_failures(tmp_path: Path) -> None:
+    """Persistent non-network failures must not hammer the receiver at 1s."""
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("host: test\ndatasets:\n  tank/ds: pass")
+
+    fake_run_unlock = MagicMock(return_value=object())
+    with (
+        patch("zfs_unlock.cli.run_unlock", new=fake_run_unlock),
+        patch("asyncio.run") as mock_run,
+        patch("time.sleep") as mock_sleep,
+    ):
+        mock_run.side_effect = [UnlockOutcome.FAILED, UnlockOutcome.FAILED, KeyboardInterrupt]
+        result = runner.invoke(app, ["unlock", "--config", str(config_file), "--daemon", "--interval", "10"])
+
+    assert result.exit_code == 0
+    assert mock_sleep.call_count == 2  # noqa: PLR2004
+    assert all(call.args == (10,) for call in mock_sleep.call_args_list)
 
 
 @pytest.mark.parametrize("interval", ["0", "-1"])
@@ -239,10 +281,10 @@ def test_cli_daemon_rejects_non_positive_interval(tmp_path: Path, interval: str)
     config_file.write_text("host: test\ndatasets:\n  tank/ds: pass")
     calls = 0
 
-    async def fake_run_unlock(*_args: object, **_kwargs: object) -> bool:
+    async def fake_run_unlock(*_args: object, **_kwargs: object) -> UnlockOutcome:
         nonlocal calls
         calls += 1
-        return True
+        return UnlockOutcome.OK
 
     with (
         patch("zfs_unlock.cli.run_unlock", new=fake_run_unlock),
@@ -406,9 +448,67 @@ def test_cli_receiver_unlock_reads_stdin(tmp_path: Path) -> None:
             _receiver(SimpleNamespace(args=["unlock tank/photos"]), allow_file=allow_file)
 
     assert exc_info.value.exit_code == 0
-    stdin_read.assert_called_once_with()
+    stdin_read.assert_called_once_with(MAX_PASSPHRASE_BYTES + 1)
     receiver_cls.return_value.parse.assert_called_once_with(["unlock", "tank/photos"])
     receiver_cls.return_value.handle.assert_called_once_with(request, stdin_text="secret\n")
+
+
+def _pipe_stdin(monkeypatch: pytest.MonkeyPatch, payload: bytes) -> int:
+    """Point zfs_unlock.cli's stdin at a real pipe pre-filled with payload."""
+    read_fd, write_fd = os.pipe()
+    os.write(write_fd, payload)
+    os.close(write_fd)
+    monkeypatch.setattr("zfs_unlock.cli.sys.stdin", SimpleNamespace(fileno=lambda: read_fd))
+    return read_fd
+
+
+def test_read_stdin_limited_reads_from_real_fd(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The fd-based reader returns the passphrase written to a real pipe."""
+    read_fd = _pipe_stdin(monkeypatch, b"secret-pass\n")
+    try:
+        assert _read_stdin_limited(1024, 5.0) == "secret-pass\n"
+    finally:
+        os.close(read_fd)
+
+
+def test_read_stdin_limited_rejects_invalid_utf8(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Non-UTF-8 passphrase bytes are refused instead of silently corrupted."""
+    read_fd = _pipe_stdin(monkeypatch, b"\xff\xfe-not-utf8\n")
+    try:
+        assert _read_stdin_limited(1024, 5.0) is None
+    finally:
+        os.close(read_fd)
+
+
+def test_read_stdin_limited_rejects_oversized_input_from_fd(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The fd-based reader enforces the byte cap."""
+    read_fd = _pipe_stdin(monkeypatch, b"x" * 2048)
+    try:
+        assert _read_stdin_limited(1024, 5.0) is None
+    finally:
+        os.close(read_fd)
+
+
+def test_cli_receiver_unlock_rejects_oversized_stdin(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Receiver refuses passphrase input larger than the stdin cap."""
+    allow_file = tmp_path / "allowed"
+    allow_file.write_text("tank/photos\n")
+    request = SimpleNamespace(requires_stdin=True)
+
+    with (
+        patch("zfs_unlock.cli.sys.stdin.read", return_value="x" * (MAX_PASSPHRASE_BYTES + 1)),
+        patch("zfs_unlock.cli.Receiver") as receiver_cls,
+    ):
+        receiver_cls.return_value.parse.return_value = request
+        with pytest.raises(typer.Exit) as exc_info:
+            _receiver(SimpleNamespace(args=["unlock tank/photos"]), allow_file=allow_file)
+
+    assert exc_info.value.exit_code == 1
+    assert "refusing passphrase" in capsys.readouterr().err
+    receiver_cls.return_value.handle.assert_not_called()
 
 
 def test_cli_receiver_disallowed_unlock_does_not_read_stdin(
@@ -670,6 +770,80 @@ def test_keygen_creates_unlock_key(tmp_path: Path) -> None:
     assert "ssh-ed25519 AAAATEST zfs-unlock" in result.stdout
     assert key_path.exists()
     assert Path(f"{key_path}.pub").exists()
+
+
+def test_service_install_linux_pins_current_executable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Service install writes a unit that runs the installed zfs-unlock binary."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    which = {"zfs-unlock": "/usr/local/bin/zfs-unlock"}
+    with (
+        patch("zfs_unlock.service.platform.system", return_value="Linux"),
+        patch("zfs_unlock.service.shutil.which", side_effect=which.get),
+        patch("zfs_unlock.service.run_process") as mock_run,
+    ):
+        result = runner.invoke(app, ["service", "install"])
+
+    assert result.exit_code == 0
+    unit = (tmp_path / ".config" / "systemd" / "user" / "zfs-unlock.service").read_text()
+    assert "ExecStart=/usr/local/bin/zfs-unlock unlock --daemon\n" in unit
+    assert "tool run" not in unit
+    assert mock_run.call_count == 2  # noqa: PLR2004
+
+
+def test_service_install_macos_pins_current_executable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Service install writes a launchd plist that runs the installed binary."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    which = {"zfs-unlock": "/usr/local/bin/zfs-unlock"}
+    with (
+        patch("zfs_unlock.service.platform.system", return_value="Darwin"),
+        patch("zfs_unlock.service.shutil.which", side_effect=which.get),
+        patch("zfs_unlock.service.run_process"),
+    ):
+        result = runner.invoke(app, ["service", "install"])
+
+    assert result.exit_code == 0
+    plist = (tmp_path / "Library" / "LaunchAgents" / "com.zfs_unlock.plist").read_text()
+    assert "    <string>/usr/local/bin/zfs-unlock</string>\n    <string>unlock</string>" in plist
+    assert "tool" not in plist
+
+
+def test_service_install_falls_back_to_uv_with_warning(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without zfs-unlock on PATH the service falls back to uv tool run."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    which = {"uv": "/opt/uv/bin/uv"}
+    with (
+        patch("zfs_unlock.service.platform.system", return_value="Linux"),
+        patch("zfs_unlock.service.shutil.which", side_effect=which.get),
+        patch("zfs_unlock.service.run_process"),
+    ):
+        result = runner.invoke(app, ["service", "install"])
+
+    assert result.exit_code == 0
+    assert "zfs-unlock not found on PATH" in ANSI_RE.sub("", result.output)
+    unit = (tmp_path / ".config" / "systemd" / "user" / "zfs-unlock.service").read_text()
+    assert "ExecStart=/opt/uv/bin/uv tool run zfs-unlock unlock --daemon\n" in unit
+
+
+def test_service_install_fails_without_executable_or_uv(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Service install fails cleanly when nothing can run the daemon."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    with (
+        patch("zfs_unlock.service.platform.system", return_value="Linux"),
+        patch("zfs_unlock.service.shutil.which", return_value=None),
+    ):
+        result = runner.invoke(app, ["service", "install"])
+
+    assert result.exit_code == 1
+    assert "neither zfs-unlock nor uv found" in ANSI_RE.sub("", result.output)
 
 
 def test_service_status_linux() -> None:

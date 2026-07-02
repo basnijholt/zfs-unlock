@@ -5,13 +5,44 @@ from __future__ import annotations
 import asyncio
 import fnmatch
 import shlex
+from dataclasses import dataclass
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
+from .constants import (
+    COMMAND_STARTUP_ERROR_RETURNCODE,
+    COMMAND_TIMEOUT_RETURNCODE,
+    SSH_CONNECTION_ERROR_RETURNCODE,
+)
 from .output import console, err_console
 from .process import CommandResult, CommandRunner, SubprocessRunner
 
 if TYPE_CHECKING:
     from .config import Config, Dataset
+
+_CONNECTION_ERROR_RETURNCODES = frozenset(
+    {
+        SSH_CONNECTION_ERROR_RETURNCODE,
+        COMMAND_TIMEOUT_RETURNCODE,
+        COMMAND_STARTUP_ERROR_RETURNCODE,
+    },
+)
+
+
+class UnlockOutcome(StrEnum):
+    """Aggregate result of one unlock pass."""
+
+    OK = "ok"
+    FAILED = "failed"
+    UNREACHABLE = "unreachable"
+
+
+@dataclass(frozen=True)
+class DatasetStatus:
+    """Lock status of a single dataset; ``locked`` is None when unknown."""
+
+    locked: bool | None
+    connection_error: bool = False
 
 
 class ZfsUnlockClient:
@@ -46,22 +77,25 @@ class ZfsUnlockClient:
             command_timeout=self.config.command_timeout,
         )
 
-    async def is_locked(self, dataset: Dataset, *, quiet: bool = False) -> bool | None:
+    async def is_locked(self, dataset: Dataset, *, quiet: bool = False) -> DatasetStatus:
         """Check whether a dataset key is unavailable."""
         result = await self.run_remote(["status", dataset.path])
         if result.returncode != 0:
             if not quiet:
                 err_console.print(f"[red]status failed for {dataset.path}: {result.stderr.strip()}[/red]")
-            return None
+            return DatasetStatus(
+                locked=None,
+                connection_error=result.returncode in _CONNECTION_ERROR_RETURNCODES,
+            )
 
         status = result.stdout.strip()
         if status == "locked":
-            return True
+            return DatasetStatus(locked=True)
         if status == "unlocked":
             if not quiet:
                 console.print(f"[green]OK[/green] {dataset.path}")
-            return False
-        return None
+            return DatasetStatus(locked=False)
+        return DatasetStatus(locked=None)
 
     async def unlock(self, dataset: Dataset) -> bool:
         """Unlock a dataset by sending its passphrase to the receiver."""
@@ -120,12 +154,14 @@ async def _lock_statuses(
     datasets: list[Dataset],
     *,
     quiet: bool,
-) -> list[bool | None]:
+) -> list[DatasetStatus]:
     statuses = await asyncio.gather(
         *[client.is_locked(dataset, quiet=quiet) for dataset in datasets],
         return_exceptions=True,
     )
-    return [None if isinstance(status, BaseException) else status for status in statuses]
+    # Exceptions (e.g. cancellation during shutdown) deliberately do NOT count
+    # as connection errors: a cancelled pass must never trip panic-mode polling.
+    return [DatasetStatus(locked=None) if isinstance(status, BaseException) else status for status in statuses]
 
 
 async def run_unlock(
@@ -135,27 +171,34 @@ async def run_unlock(
     quiet: bool = False,
     dataset_filters: list[str] | None = None,
     runner: CommandRunner | None = None,
-) -> bool:
-    """Run one unlock pass. Returns False when any dataset check or unlock fails."""
+) -> UnlockOutcome:
+    """Run one unlock pass over all matching datasets.
+
+    Every locked dataset gets an unlock attempt even when others fail;
+    UNREACHABLE is reported only when every status check failed at the
+    connection level, so callers can tell "host is down" from "something
+    on this host or in this config is wrong".
+    """
     datasets = _select_datasets(config, dataset_filters)
     if datasets is None:
-        return False
+        return UnlockOutcome.FAILED
 
     if dry_run:
         console.print("[yellow]Dry run:[/yellow]")
         for dataset in datasets:
             console.print(f"  - {dataset.path}")
-        return True
+        return UnlockOutcome.OK
 
     client = ZfsUnlockClient(config, runner=runner)
     statuses = await _lock_statuses(client, datasets, quiet=quiet)
-    if any(status is None for status in statuses):
-        return False
+    if all(status.connection_error for status in statuses):
+        return UnlockOutcome.UNREACHABLE
 
-    for dataset, locked in zip(datasets, statuses, strict=True):
-        if locked is True and not await client.unlock(dataset):
-            return False
-    return True
+    failed = any(status.locked is None for status in statuses)
+    for dataset, status in zip(datasets, statuses, strict=True):
+        if status.locked is True and not await client.unlock(dataset):
+            failed = True
+    return UnlockOutcome.FAILED if failed else UnlockOutcome.OK
 
 
 async def run_lock(
@@ -173,12 +216,12 @@ async def run_lock(
     client = ZfsUnlockClient(config, runner=runner)
     statuses = await _lock_statuses(client, datasets, quiet=True)
     success = True
-    for dataset, locked in zip(datasets, statuses, strict=True):
-        if locked is None:
+    for dataset, status in zip(datasets, statuses, strict=True):
+        if status.locked is None:
             success = False
-        elif locked is False:
+        elif status.locked is False:
             success = await client.lock(dataset, force=force) and success
-        elif locked is True:
+        else:
             console.print(f"[dim]Already locked: {dataset.path}[/dim]")
     return success
 
@@ -197,12 +240,12 @@ async def run_status(
     client = ZfsUnlockClient(config, runner=runner)
     statuses = await _lock_statuses(client, datasets, quiet=True)
     success = True
-    for dataset, locked in zip(datasets, statuses, strict=True):
-        if locked is None:
+    for dataset, status in zip(datasets, statuses, strict=True):
+        if status.locked is None:
             console.print(f"[red]?[/red] {dataset.path} [dim]unknown[/dim]")
             success = False
-        elif locked is True:
+        elif status.locked is True:
             console.print(f"[yellow]LOCK[/yellow] {dataset.path} [dim]locked[/dim]")
-        elif locked is False:
+        else:
             console.print(f"[green]OPEN[/green] {dataset.path} [dim]unlocked[/dim]")
     return success

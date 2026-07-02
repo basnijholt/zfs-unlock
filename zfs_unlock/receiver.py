@@ -73,11 +73,11 @@ class Receiver:
         except ValueError:
             return self._error("unsupported command")
 
-        if action in {_ReceiverAction.STATUS, _ReceiverAction.UNLOCK}:
-            return self._parse_dataset_request(action, args)
-        if action == _ReceiverAction.LOCK:
-            return self._parse_lock_request(args)
-        return self._error("unsupported command")
+        match action:
+            case _ReceiverAction.STATUS | _ReceiverAction.UNLOCK:
+                return self._parse_dataset_request(action, args)
+            case _ReceiverAction.LOCK:
+                return self._parse_lock_request(args)
 
     def _parse_dataset_request(self, action: _ReceiverAction, args: list[str]) -> _ReceiverRequest | CommandResult:
         if len(args) != _DATASET_COMMAND_ARG_COUNT:
@@ -106,13 +106,13 @@ class Receiver:
 
     def handle(self, request: _ReceiverRequest, *, stdin_text: str) -> CommandResult:
         """Handle a restricted receiver command."""
-        if request.action == _ReceiverAction.STATUS:
-            return self._status(request.dataset)
-        if request.action == _ReceiverAction.UNLOCK:
-            return self._unlock(request.dataset, stdin_text=stdin_text)
-        if request.action == _ReceiverAction.LOCK:
-            return self._lock(request.dataset, force=request.force)
-        return self._error("unsupported command")
+        match request.action:
+            case _ReceiverAction.STATUS:
+                return self._status(request.dataset)
+            case _ReceiverAction.UNLOCK:
+                return self._unlock(request.dataset, stdin_text=stdin_text)
+            case _ReceiverAction.LOCK:
+                return self._lock(request.dataset, force=request.force)
 
     @cached_property
     def _allowed_datasets(self) -> frozenset[str]:
@@ -165,36 +165,59 @@ class Receiver:
 
         result = self.runner.run([self.zfs_path, "load-key", "-L", "prompt", dataset], input_text=stdin_text)
         if result.returncode != 0:
-            response = CommandResult(returncode=1, stdout="", stderr=result.stderr)
-        else:
-            mount = self.runner.run([self.zfs_path, "mount", "-a"])
-            response = (
-                CommandResult(returncode=0, stdout=f"unlocked {dataset}\n", stderr="")
-                if mount.returncode == 0
-                else CommandResult(returncode=1, stdout="", stderr=mount.stderr)
-            )
-        return response
+            return CommandResult(returncode=1, stdout="", stderr=result.stderr)
+        mount_error = self._mount_subtree(dataset)
+        return mount_error or CommandResult(returncode=0, stdout=f"unlocked {dataset}\n", stderr="")
 
-    def _mounted_datasets(self, dataset: str) -> list[str] | CommandResult:
-        listed = self.runner.run([self.zfs_path, "list", "-H", "-o", "name,mounted", "-r", dataset])
+    def _subtree_rows(self, dataset: str, columns: list[str]) -> list[list[str]] | CommandResult:
+        """List validated `zfs list` rows (name plus `columns`) for a dataset subtree."""
+        listed = self.runner.run([self.zfs_path, "list", "-H", "-o", ",".join(["name", *columns]), "-r", dataset])
         if listed.returncode != 0:
             return CommandResult(returncode=1, stdout="", stderr=listed.stderr)
 
-        mounted_datasets: list[str] = []
+        rows: list[list[str]] = []
         for line in listed.stdout.splitlines():
             fields = line.split("\t")
-            if len(fields) != 2:  # noqa: PLR2004
+            if len(fields) != len(columns) + 1:
                 return self._error(f"unexpected zfs list output: {line}")
 
-            child_dataset, mounted = fields
-            if mounted != "yes":
-                continue
-            if not is_safe_dataset_name(child_dataset):
-                return self._error(f"unsafe dataset name from zfs list: {child_dataset}")
-            if child_dataset != dataset and not child_dataset.startswith(f"{dataset}/"):
-                return self._error(f"mounted dataset outside target subtree: {child_dataset}")
-            mounted_datasets.append(child_dataset)
+            name = fields[0]
+            if not is_safe_dataset_name(name):
+                return self._error(f"unsafe dataset name from zfs list: {name}")
+            if name != dataset and not name.startswith(f"{dataset}/"):
+                return self._error(f"dataset outside target subtree: {name}")
+            rows.append(fields)
+        return rows
 
+    def _mount_subtree(self, dataset: str) -> CommandResult | None:
+        """Mount unmounted datasets in the unlocked subtree, parents first.
+
+        Deliberately narrower than `zfs mount -a`, which would mount every
+        mountable dataset on the host instead of only the allowlisted subtree.
+        Datasets whose own key is still unavailable (nested encryption roots)
+        are skipped, matching `zfs mount -a` behavior.
+        """
+        rows = self._subtree_rows(dataset, ["canmount", "mounted", "keystatus"])
+        if isinstance(rows, CommandResult):
+            return rows
+
+        mountable = [
+            name
+            for name, canmount, mounted, keystatus in rows
+            if canmount == "on" and mounted == "no" and keystatus != "unavailable"
+        ]
+        for name in sorted(mountable, key=lambda name: name.count("/")):
+            mount = self.runner.run([self.zfs_path, "mount", name])
+            if mount.returncode != 0:
+                return CommandResult(returncode=1, stdout="", stderr=mount.stderr)
+        return None
+
+    def _mounted_datasets(self, dataset: str) -> list[str] | CommandResult:
+        rows = self._subtree_rows(dataset, ["mounted"])
+        if isinstance(rows, CommandResult):
+            return rows
+
+        mounted_datasets = [name for name, mounted in rows if mounted == "yes"]
         return sorted(mounted_datasets, key=lambda name: name.count("/"))
 
     def _force_unmount_mounted_datasets(self, dataset: str) -> CommandResult | None:

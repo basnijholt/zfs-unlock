@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated, Any, cast
+from typing import Annotated, Any
 
 import typer
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, field_validator, model_validator
 
 from .constants import CONFIG_SEARCH_PATHS, DATASET_NAME_RE, EXAMPLE_CONFIG
 from .output import err_console
@@ -52,8 +52,11 @@ def is_safe_dataset_name(name: str) -> bool:
 class Dataset(BaseModel):
     """A ZFS dataset to unlock."""
 
+    # Never echo raw inputs in validation errors: `secret` may be a passphrase.
+    model_config = ConfigDict(hide_input_in_errors=True)
+
     path: str
-    secret: str
+    secret: SecretStr
 
     @field_validator("path")
     @classmethod
@@ -65,13 +68,15 @@ class Dataset(BaseModel):
         return value
 
     def get_passphrase(self, mode: SecretsMode) -> str:  # noqa: D102
-        return _resolve_secret(self.secret, mode)
+        return _resolve_secret(self.secret.get_secret_value(), mode)
 
 
 class Config(BaseModel):
     """Application configuration for the off-box unlock client."""
 
-    model_config = ConfigDict(extra="forbid")
+    # hide_input_in_errors: the datasets mapping can hold inline passphrases,
+    # and load_config prints ValidationError text to the terminal.
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     host: str
     user: str = "zfs-unlock"
@@ -80,7 +85,15 @@ class Config(BaseModel):
     connect_timeout: Annotated[int, Field(gt=0)] = 5
     command_timeout: Annotated[float, Field(gt=0)] = 30
     secrets: SecretsMode = SecretsMode.AUTO
-    datasets: list[Dataset]
+    datasets: list[Dataset] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _datasets_mapping_to_list(cls, data: Any) -> Any:
+        """Accept the config-file shape where datasets map paths to secrets."""
+        if isinstance(data, dict) and isinstance(datasets := data.get("datasets"), dict):
+            data = {**data, "datasets": [{"path": path, "secret": secret} for path, secret in datasets.items()]}
+        return data
 
     @classmethod
     def from_yaml(cls, path: Path) -> Config:  # noqa: D102
@@ -90,21 +103,7 @@ class Config(BaseModel):
         if not isinstance(raw_data, dict):
             msg = "config file must contain a YAML mapping"
             raise TypeError(msg)
-        if not all(isinstance(key, str) for key in raw_data):
-            msg = "config keys must be strings"
-            raise TypeError(msg)
-
-        data = cast("dict[str, Any]", dict(raw_data))
-        datasets_raw = data.pop("datasets", {})
-        if not isinstance(datasets_raw, dict):
-            msg = "config field 'datasets' must be a mapping"
-            raise TypeError(msg)
-        if not all(isinstance(ds_path, str) and isinstance(secret, str) for ds_path, secret in datasets_raw.items()):
-            msg = "config field 'datasets' must map dataset names to string secrets"
-            raise TypeError(msg)
-
-        datasets = [Dataset(path=ds_path, secret=secret) for ds_path, secret in datasets_raw.items()]
-        return cls(datasets=datasets, **data)
+        return cls.model_validate(raw_data)
 
 
 def find_config() -> Path | None:

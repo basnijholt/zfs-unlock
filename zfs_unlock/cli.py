@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import selectors
 import sys
 import time
 from pathlib import Path
@@ -11,8 +12,9 @@ from typing import Annotated
 
 import typer
 
-from .client import run_lock, run_status, run_unlock
+from .client import UnlockOutcome, run_lock, run_status, run_unlock
 from .config import load_config
+from .constants import MAX_PASSPHRASE_BYTES, RECEIVER_STDIN_TIMEOUT_SECONDS
 from .diagnostics import doctor
 from .keygen import keygen
 from .output import console
@@ -53,30 +55,30 @@ def _unlock(
     if daemon:
         console.print(f"[bold]Running with smart polling (interval: {interval}s)[/bold]")
         current_interval = interval
-        last_success = True
+        reachable = True
 
         while True:
             try:
-                success = asyncio.run(run_unlock(config, dry_run=dry_run, quiet=True, dataset_filters=dataset))
-                if success:
-                    if not last_success:
-                        console.print("[green]Connection restored.[/green]")
-                    current_interval = interval
-                else:
-                    if last_success:
-                        console.print(
-                            "[yellow]Connection lost/unstable. Switching to panic mode (1s interval).[/yellow]",
-                        )
+                outcome = asyncio.run(run_unlock(config, dry_run=dry_run, quiet=True, dataset_filters=dataset))
+                if outcome is UnlockOutcome.UNREACHABLE:
+                    if reachable:
+                        console.print("[yellow]Receiver unreachable. Switching to panic mode (1s interval).[/yellow]")
                     current_interval = 1
+                else:
+                    if not reachable and outcome is UnlockOutcome.OK:
+                        console.print("[green]Connection restored.[/green]")
+                    elif not reachable:
+                        console.print("[yellow]Receiver reachable again, but the unlock pass failed.[/yellow]")
+                    current_interval = interval
 
-                last_success = success
+                reachable = outcome is not UnlockOutcome.UNREACHABLE
                 time.sleep(current_interval)
             except KeyboardInterrupt:
                 console.print("\n[bold]Stopped[/bold]")
                 break
     else:
-        success = asyncio.run(run_unlock(config, dry_run=dry_run, dataset_filters=dataset))
-        if not success:
+        outcome = asyncio.run(run_unlock(config, dry_run=dry_run, dataset_filters=dataset))
+        if outcome is not UnlockOutcome.OK:
             raise typer.Exit(1)
 
 
@@ -103,6 +105,49 @@ def _status(
     success = asyncio.run(run_status(config, dataset_filters=dataset))
     if not success:
         raise typer.Exit(1)
+
+
+def _read_stdin_limited(limit: int, timeout: float) -> str | None:
+    """Read stdin to EOF; None when over `limit` bytes, past `timeout`, or not UTF-8.
+
+    The receiver runs as root behind an SSH forced command, so a client must
+    not be able to park it forever or feed it unbounded input. Refusing
+    non-UTF-8 input keeps failures explicit: a lenient decode would hand
+    `zfs load-key` a silently corrupted passphrase.
+
+    Reading the raw fd with os.read is only correct because this is the
+    process's first and only stdin consumer — nothing may touch sys.stdin
+    (and buffer bytes away from the fd) before this call.
+    """
+    try:
+        fd = sys.stdin.fileno()
+    except (ValueError, OSError):  # non-file stdin, e.g. in tests
+        try:
+            data = sys.stdin.read(limit + 1)
+        except UnicodeDecodeError:
+            return None
+        return None if len(data) > limit else data
+
+    deadline = time.monotonic() + timeout
+    chunks: list[bytes] = []
+    total = 0
+    with selectors.DefaultSelector() as selector:
+        selector.register(fd, selectors.EVENT_READ)
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not selector.select(remaining):
+                return None
+            chunk = os.read(fd, 65536)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > limit:
+                return None
+            chunks.append(chunk)
+    try:
+        return b"".join(chunks).decode()
+    except UnicodeDecodeError:
+        return None
 
 
 def _receiver(
@@ -132,9 +177,21 @@ def _receiver(
     request = receiver_instance.parse(args)
     if isinstance(request, CommandResult):
         response = request
+    elif request.requires_stdin:
+        stdin_text = _read_stdin_limited(MAX_PASSPHRASE_BYTES, RECEIVER_STDIN_TIMEOUT_SECONDS)
+        if stdin_text is None:
+            response = CommandResult(
+                returncode=1,
+                stdout="",
+                stderr=(
+                    f"refusing passphrase: stdin exceeded {MAX_PASSPHRASE_BYTES} bytes,"
+                    " timed out, or was not valid UTF-8\n"
+                ),
+            )
+        else:
+            response = receiver_instance.handle(request, stdin_text=stdin_text)
     else:
-        stdin_text = sys.stdin.read() if request.requires_stdin else ""
-        response = receiver_instance.handle(request, stdin_text=stdin_text)
+        response = receiver_instance.handle(request, stdin_text="")
 
     if response.stdout:
         sys.stdout.write(response.stdout)

@@ -5,8 +5,9 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
-from zfs_unlock.client import run_lock, run_status, run_unlock
+from zfs_unlock.client import UnlockOutcome, run_lock, run_status, run_unlock
 from zfs_unlock.config import Config, Dataset, SecretsMode
+from zfs_unlock.constants import SSH_CONNECTION_ERROR_RETURNCODE
 from zfs_unlock.process import CommandResult
 
 if TYPE_CHECKING:
@@ -69,7 +70,7 @@ def test_run_unlock_unlocks_only_locked_datasets() -> None:
         CommandResult(returncode=0, stdout="unlocked tank/locked\n", stderr=""),
     )
 
-    assert asyncio.run(run_unlock(config, runner=runner)) is True
+    assert asyncio.run(run_unlock(config, runner=runner)) is UnlockOutcome.OK
 
     remote_commands = [call[0][-1] for call in runner.calls]
     assert remote_commands == [
@@ -80,24 +81,93 @@ def test_run_unlock_unlocks_only_locked_datasets() -> None:
     assert runner.calls[2][1] == "pass1\n"
 
 
-def test_run_unlock_returns_false_when_any_status_fails() -> None:
-    """run_unlock returns False when a dataset status check fails."""
+def test_run_unlock_still_unlocks_other_datasets_when_one_status_fails() -> None:
+    """A failed status check for one dataset does not block unlocking the rest."""
     config = Config(
         host="zfs-host.example.lan",
         datasets=[
-            Dataset(path="tank/locked", secret="pass1"),
-            Dataset(path="tank/open", secret="pass2"),
+            Dataset(path="tank/broken", secret="pass1"),
+            Dataset(path="tank/locked", secret="pass2"),
         ],
     )
     runner = RecordingRunner(
-        CommandResult(returncode=1, stdout="", stderr="ssh failed"),
+        CommandResult(returncode=1, stdout="", stderr="receiver error"),
+        CommandResult(returncode=0, stdout="locked\n", stderr=""),
+        CommandResult(returncode=0, stdout="unlocked tank/locked\n", stderr=""),
+    )
+
+    assert asyncio.run(run_unlock(config, runner=runner)) is UnlockOutcome.FAILED
+
+    assert [call[0][-1] for call in runner.calls] == [
+        "status tank/broken",
+        "status tank/locked",
+        "unlock tank/locked",
+    ]
+
+
+def test_run_unlock_attempts_remaining_datasets_after_unlock_failure() -> None:
+    """A failed unlock for one dataset does not skip the remaining datasets."""
+    config = Config(
+        host="zfs-host.example.lan",
+        datasets=[
+            Dataset(path="tank/first", secret="pass1"),
+            Dataset(path="tank/second", secret="pass2"),
+        ],
+    )
+    runner = RecordingRunner(
+        CommandResult(returncode=0, stdout="locked\n", stderr=""),
+        CommandResult(returncode=0, stdout="locked\n", stderr=""),
+        CommandResult(returncode=1, stdout="", stderr="wrong passphrase\n"),
+        CommandResult(returncode=0, stdout="unlocked tank/second\n", stderr=""),
+    )
+
+    assert asyncio.run(run_unlock(config, runner=runner)) is UnlockOutcome.FAILED
+
+    assert [call[0][-1] for call in runner.calls] == [
+        "status tank/first",
+        "status tank/second",
+        "unlock tank/first",
+        "unlock tank/second",
+    ]
+
+
+def test_run_unlock_reports_unreachable_when_all_connections_fail() -> None:
+    """Connection-level failures for every dataset report an unreachable host."""
+    config = Config(
+        host="zfs-host.example.lan",
+        datasets=[
+            Dataset(path="tank/one", secret="pass1"),
+            Dataset(path="tank/two", secret="pass2"),
+        ],
+    )
+    runner = RecordingRunner(
+        CommandResult(returncode=SSH_CONNECTION_ERROR_RETURNCODE, stdout="", stderr="Connection refused\n"),
+        CommandResult(returncode=SSH_CONNECTION_ERROR_RETURNCODE, stdout="", stderr="Connection refused\n"),
+    )
+
+    assert asyncio.run(run_unlock(config, runner=runner)) is UnlockOutcome.UNREACHABLE
+
+    assert [call[0][-1] for call in runner.calls] == ["status tank/one", "status tank/two"]
+
+
+def test_run_unlock_reports_failed_when_only_some_connections_fail() -> None:
+    """Partial connection failures are operation failures, not an unreachable host."""
+    config = Config(
+        host="zfs-host.example.lan",
+        datasets=[
+            Dataset(path="tank/one", secret="pass1"),
+            Dataset(path="tank/two", secret="pass2"),
+        ],
+    )
+    runner = RecordingRunner(
+        CommandResult(returncode=SSH_CONNECTION_ERROR_RETURNCODE, stdout="", stderr="Connection refused\n"),
         CommandResult(returncode=0, stdout="unlocked\n", stderr=""),
     )
 
-    assert asyncio.run(run_unlock(config, runner=runner)) is False
+    assert asyncio.run(run_unlock(config, runner=runner)) is UnlockOutcome.FAILED
 
 
-def test_run_unlock_returns_false_when_file_secret_is_missing(tmp_path: Path) -> None:
+def test_run_unlock_returns_failed_when_file_secret_is_missing(tmp_path: Path) -> None:
     """run_unlock reports missing file-backed secrets instead of raising."""
     config = Config(
         host="zfs-host.example.lan",
@@ -106,12 +176,12 @@ def test_run_unlock_returns_false_when_file_secret_is_missing(tmp_path: Path) ->
     )
     runner = RecordingRunner(CommandResult(returncode=0, stdout="locked\n", stderr=""))
 
-    assert asyncio.run(run_unlock(config, runner=runner)) is False
+    assert asyncio.run(run_unlock(config, runner=runner)) is UnlockOutcome.FAILED
 
     assert [call[0][-1] for call in runner.calls] == ["status tank/locked"]
 
 
-def test_run_unlock_returns_false_when_filter_matches_nothing() -> None:
+def test_run_unlock_returns_failed_when_filter_matches_nothing() -> None:
     """run_unlock reports explicit filters that match no configured datasets."""
     config = Config(
         host="zfs-host.example.lan",
@@ -119,7 +189,7 @@ def test_run_unlock_returns_false_when_filter_matches_nothing() -> None:
     )
     runner = RecordingRunner()
 
-    assert asyncio.run(run_unlock(config, dataset_filters=["missing"], runner=runner)) is False
+    assert asyncio.run(run_unlock(config, dataset_filters=["missing"], runner=runner)) is UnlockOutcome.FAILED
 
     assert runner.calls == []
 

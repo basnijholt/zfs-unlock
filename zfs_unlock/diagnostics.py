@@ -47,7 +47,7 @@ def _check_identity_file(identity_file: Path | None) -> bool:
 def _check_secret_file_permissions(config: Config) -> bool:
     ok = True
     for dataset in config.datasets:
-        path = Path(dataset.secret).expanduser()
+        path = Path(dataset.secret.get_secret_value()).expanduser()
         if config.secrets == SecretsMode.INLINE:
             continue
         if config.secrets == SecretsMode.AUTO and not path.exists():

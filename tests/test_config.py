@@ -88,6 +88,14 @@ class TestDataset:
 
         assert ds.get_passphrase(SecretsMode.FILES) == "file-passphrase"
 
+    def test_dataset_repr_masks_secret(self) -> None:
+        """Dataset objects never expose the raw secret in repr/str."""
+        dataset = Dataset(path="tank/photos", secret="super-secret")
+
+        assert "super-secret" not in repr(dataset)
+        assert "super-secret" not in str(dataset)
+        assert dataset.get_passphrase(SecretsMode.INLINE) == "super-secret"
+
 
 class TestConfig:
     """Tests for Config model."""
@@ -156,8 +164,24 @@ class TestConfig:
         config_file = tmp_path / "config.yaml"
         config_file.write_text("host: zfs-host.example.lan\ndatasets:\n  - tank/photos\n")
 
-        with pytest.raises(TypeError, match=r"datasets.*mapping"):
+        with pytest.raises(ValidationError, match="datasets"):
             Config.from_yaml(config_file)
+
+    def test_from_yaml_does_not_echo_secrets_in_validation_errors(self, tmp_path: Path) -> None:
+        """Validation errors must never leak inline secret values."""
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            dedent("""\
+            host: zfs-host.example.lan
+            datasets:
+              tank/photos: [hidden-passphrase-value]
+            """),
+        )
+
+        with pytest.raises(ValidationError) as exc_info:
+            Config.from_yaml(config_file)
+
+        assert "hidden-passphrase-value" not in str(exc_info.value)
 
     def test_from_yaml_rejects_unknown_top_level_keys(self, tmp_path: Path) -> None:
         """Unknown config keys are rejected instead of silently ignored."""
