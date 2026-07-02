@@ -12,7 +12,7 @@ import typer
 from typer.testing import CliRunner
 
 from zfs_unlock.cli import _receiver, app
-from zfs_unlock.client import _filter_datasets
+from zfs_unlock.client import UnlockOutcome, _filter_datasets
 from zfs_unlock.config import Dataset, find_config
 
 runner = CliRunner()
@@ -155,9 +155,9 @@ def test_cli_with_config(tmp_path: Path) -> None:
     config_file.write_text("host: test\ndatasets:\n  tank/ds: pass")
     calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
 
-    async def fake_run_unlock(*args: object, **kwargs: object) -> bool:
+    async def fake_run_unlock(*args: object, **kwargs: object) -> UnlockOutcome:
         calls.append((args, kwargs))
-        return True
+        return UnlockOutcome.OK
 
     with patch("zfs_unlock.cli.run_unlock", new=fake_run_unlock):
         result = runner.invoke(app, ["unlock", "--config", str(config_file)])
@@ -166,13 +166,14 @@ def test_cli_with_config(tmp_path: Path) -> None:
     assert len(calls) == 1
 
 
-def test_cli_unlock_exits_nonzero_when_run_fails(tmp_path: Path) -> None:
+@pytest.mark.parametrize("outcome", [UnlockOutcome.FAILED, UnlockOutcome.UNREACHABLE])
+def test_cli_unlock_exits_nonzero_when_run_fails(tmp_path: Path, outcome: UnlockOutcome) -> None:
     """The unlock command reflects failed unlock work in its exit code."""
     config_file = tmp_path / "config.yaml"
     config_file.write_text("host: test\ndatasets:\n  tank/ds: pass")
 
-    async def fake_run_unlock(*_args: object, **_kwargs: object) -> bool:
-        return False
+    async def fake_run_unlock(*_args: object, **_kwargs: object) -> UnlockOutcome:
+        return outcome
 
     with patch("zfs_unlock.cli.run_unlock", new=fake_run_unlock):
         result = runner.invoke(app, ["unlock", "--config", str(config_file)])
@@ -181,7 +182,7 @@ def test_cli_unlock_exits_nonzero_when_run_fails(tmp_path: Path) -> None:
 
 
 def test_cli_daemon_mode(tmp_path: Path) -> None:
-    """Test CLI daemon smart polling loop."""
+    """Daemon polls fast only while the receiver is unreachable."""
     config_file = tmp_path / "config.yaml"
     config_file.write_text("host: test\ndatasets:\n  tank/ds: pass")
 
@@ -191,13 +192,32 @@ def test_cli_daemon_mode(tmp_path: Path) -> None:
         patch("asyncio.run") as mock_run,
         patch("time.sleep") as mock_sleep,
     ):
-        mock_run.side_effect = [True, False, KeyboardInterrupt]
+        mock_run.side_effect = [UnlockOutcome.OK, UnlockOutcome.UNREACHABLE, KeyboardInterrupt]
         result = runner.invoke(app, ["unlock", "--config", str(config_file), "--daemon", "--interval", "10"])
 
     assert result.exit_code == 0
     assert mock_run.call_count == DAEMON_RUN_CALLS
     mock_sleep.assert_any_call(10)
     mock_sleep.assert_any_call(1)
+
+
+def test_cli_daemon_keeps_normal_interval_on_non_connection_failures(tmp_path: Path) -> None:
+    """Persistent non-network failures must not hammer the receiver at 1s."""
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("host: test\ndatasets:\n  tank/ds: pass")
+
+    fake_run_unlock = MagicMock(return_value=object())
+    with (
+        patch("zfs_unlock.cli.run_unlock", new=fake_run_unlock),
+        patch("asyncio.run") as mock_run,
+        patch("time.sleep") as mock_sleep,
+    ):
+        mock_run.side_effect = [UnlockOutcome.FAILED, UnlockOutcome.FAILED, KeyboardInterrupt]
+        result = runner.invoke(app, ["unlock", "--config", str(config_file), "--daemon", "--interval", "10"])
+
+    assert result.exit_code == 0
+    assert mock_sleep.call_count == 2  # noqa: PLR2004
+    assert all(call.args == (10,) for call in mock_sleep.call_args_list)
 
 
 @pytest.mark.parametrize("interval", ["0", "-1"])
@@ -207,10 +227,10 @@ def test_cli_daemon_rejects_non_positive_interval(tmp_path: Path, interval: str)
     config_file.write_text("host: test\ndatasets:\n  tank/ds: pass")
     calls = 0
 
-    async def fake_run_unlock(*_args: object, **_kwargs: object) -> bool:
+    async def fake_run_unlock(*_args: object, **_kwargs: object) -> UnlockOutcome:
         nonlocal calls
         calls += 1
-        return True
+        return UnlockOutcome.OK
 
     with (
         patch("zfs_unlock.cli.run_unlock", new=fake_run_unlock),
