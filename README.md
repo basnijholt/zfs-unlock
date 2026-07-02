@@ -9,44 +9,47 @@
 
 <img src="docs/logo.svg" alt="ZFS Unlock Logo" align="right" width="120" />
 
-Unlock encrypted OpenZFS datasets over SSH, through a restricted receiver on the ZFS host, with passphrases kept on a separate trusted machine.
+Automatically unlock your encrypted OpenZFS datasets after every reboot — without keeping the keys on the machine they protect.
 
 ## Why?
 
-OpenZFS native encryption protects data at rest, but encrypted datasets still need their keys loaded after every reboot.
-The easy automation path is to store key files on the storage host, but that weakens the model: if the host is stolen, the attacker has both the encrypted data and the keys.
-`zfs-unlock` keeps those passphrases on a separate trusted machine and sends them only when it can reach a restricted SSH receiver on the ZFS host.
+OpenZFS native encryption keeps your data safe at rest, but every reboot leaves your datasets locked until the key is reloaded.
+The obvious way to automate that — storing the key on the storage host — quietly defeats the point: anyone who steals the host gets the data *and* the key to it.
 
-There are two roles:
+`zfs-unlock` keeps your passphrases on a separate, trusted device — a Raspberry Pi, a spare home server, anything small — and sends them to the storage host over a locked-down SSH channel, automatically, as soon as the host is reachable.
+The keys never live on the machine they protect, so a stolen host is just a box of encrypted bytes.
 
-- the **unlock device** stores passphrases and runs `zfs-unlock unlock`, either once or as a daemon
-- the **ZFS host** runs a forced-command receiver that can only operate on explicitly allowed datasets
+Think of it as a hardware security key for your storage: a small device tucked away on your network that unlocks your datasets whenever your ZFS host boots — no manual step, no keys left behind.
 
-This gives you a practical second factor for storage unlocks:
+## How it works
 
-1. Run `zfs-unlock` on a **separate device** (Raspberry Pi, home server, etc.)
-2. Store encryption passphrases **only on that device**
-3. Datasets auto-unlock when both devices are on the network
-4. If the storage host is stolen, data remains encrypted and inaccessible
+Two machines, two roles:
 
-Unlike a plain root SSH key, the receiver path is intentionally narrow:
+- the **unlock device** stores the passphrases and runs `zfs-unlock unlock` — once, or as a daemon that waits for the host to come online
+- the **ZFS host** runs a restricted receiver that can only check, unlock, or lock the datasets you explicitly allow
 
-- a dedicated `zfs-unlock` SSH user
-- an SSH key restricted with `restrict`, `from=...`, and `command=...`
-- sudo permission only for a root-owned receiver wrapper
-- a receiver-side dataset allowlist
-- a receiver parser that only accepts `status`, `unlock`, and `lock`
+Nix is optional: the Python CLI and the SSH receiver run anywhere, and the included NixOS modules simply automate the setup when you want it.
 
-Think of it as a hardware security key for your storage—hidden somewhere in your house, it automatically unlocks your datasets whenever your ZFS host boots. No manual intervention required.
+## Security model
 
-This project came from my own migration path: I happily used [`truenas-unlock`](https://github.com/basnijholt/truenas-unlock) on TrueNAS, then built this generic OpenZFS version after [switching my storage host from TrueNAS to NixOS](https://www.nijho.lt/post/truenas-to-nixos/).
-Nix is optional; the Python CLI and restricted SSH receiver work without Nix, while the included NixOS modules provide declarative setup when you want it.
+Letting another machine unlock your storage sounds risky, so the receiver is deliberately narrow — nothing like handing out a root SSH key:
+
+- a dedicated `zfs-unlock` SSH user, never root
+- an SSH key restricted with `restrict`, `from=...`, and a forced `command=...`
+- sudo limited to a single root-owned receiver wrapper
+- a receiver-side allowlist of the datasets it may touch
+- a parser that accepts only `status`, `unlock`, and `lock`
+
+So even if the receiver key leaks, it can't run arbitrary commands on the storage host — only those three actions, only on the datasets you allowlisted, and only from the address you allowed.
 
 ## Table of Contents
 
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 
+- [Why?](#why)
+- [How it works](#how-it-works)
+- [Security model](#security-model)
 - [Install](#install)
 - [Setup](#setup)
 - [Usage](#usage)
@@ -233,26 +236,25 @@ zfs-unlock --help
 
  Unlock OpenZFS datasets over a restricted SSH receiver
 
-╭─ Options ────────────────────────────────────────────────────────────────────╮
-│ --version  -v        Show version and exit                                   │
-│ --help     -h        Show this message and exit.                             │
-╰──────────────────────────────────────────────────────────────────────────────╯
-╭─ Client Commands ────────────────────────────────────────────────────────────╮
-│ unlock    Unlock configured datasets.                                        │
-│ lock      Lock configured datasets.                                          │
-│ status    Show lock status of configured datasets.                           │
-│ doctor    Check client config, SSH key, host reachability, and receiver      │
-│           status.                                                            │
-╰──────────────────────────────────────────────────────────────────────────────╯
-╭─ Setup Commands ─────────────────────────────────────────────────────────────╮
-│ keygen    Generate a dedicated SSH key for zfs-unlock.                       │
-╰──────────────────────────────────────────────────────────────────────────────╯
-╭─ Receiver Commands ──────────────────────────────────────────────────────────╮
-│ receiver  Run the restricted receiver.                                       │
-╰──────────────────────────────────────────────────────────────────────────────╯
-╭─ Service Commands ───────────────────────────────────────────────────────────╮
-│ service   Manage system service                                              │
-╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ Options ──────────────────────────────────────────────────────────────────────────────╮
+│ --version  -v        Show version and exit                                             │
+│ --help     -h        Show this message and exit.                                       │
+╰────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Client Commands ──────────────────────────────────────────────────────────────────────╮
+│ unlock    Unlock configured datasets.                                                  │
+│ lock      Lock configured datasets.                                                    │
+│ status    Show lock status of configured datasets.                                     │
+│ doctor    Check client config, SSH key, host reachability, and receiver status.        │
+╰────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Setup Commands ───────────────────────────────────────────────────────────────────────╮
+│ keygen    Generate a dedicated SSH key for zfs-unlock.                                 │
+╰────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Receiver Commands ────────────────────────────────────────────────────────────────────╮
+│ receiver  Run the restricted receiver.                                                 │
+╰────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Service Commands ─────────────────────────────────────────────────────────────────────╮
+│ service   Manage system service                                                        │
+╰────────────────────────────────────────────────────────────────────────────────────────╯
 
 ```
 
@@ -296,7 +298,7 @@ uv run mypy zfs_unlock
 
 ## Credits
 
-Inspired by [`truenas-unlock`](https://github.com/basnijholt/truenas-unlock).
+`zfs-unlock` grew out of [`truenas-unlock`](https://github.com/basnijholt/truenas-unlock): I used that happily on TrueNAS, then built this generic OpenZFS version after [moving my storage host from TrueNAS to NixOS](https://www.nijho.lt/post/truenas-to-nixos/).
 
 ## License
 
