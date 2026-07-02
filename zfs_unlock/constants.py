@@ -13,6 +13,13 @@ SSH_CONNECTION_ERROR_RETURNCODE = 255
 # The receiver runs as root; bound what an SSH client can make it read.
 MAX_PASSPHRASE_BYTES = 64 * 1024
 
+# Daemon polling. While the receiver is unreachable we poll fast so a
+# just-rebooted host is unlocked promptly, but cap that fast window: a genuinely
+# persistent failure (wrong key, host-key mismatch, host powered off) then backs
+# off to the normal interval instead of hammering the host at 1s forever.
+PANIC_INTERVAL_SECONDS = 1
+PANIC_MODE_MAX_SECONDS = 300
+
 CONFIG_SEARCH_PATHS = [
     Path("config.yaml"),
     Path("config.yml"),
