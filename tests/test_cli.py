@@ -989,9 +989,10 @@ def test_keygen_creates_unlock_key(tmp_path: Path) -> None:
         assert "-t" in cmd
         assert "ed25519" in cmd
         assert "-f" in cmd
-        assert cmd[cmd.index("-f") + 1] == str(key_path)
-        key_path.write_text("private")
-        Path(f"{key_path}.pub").write_text("ssh-ed25519 AAAATEST zfs-unlock\n")
+        target = Path(cmd[cmd.index("-f") + 1])
+        assert target.parent == key_path.parent
+        target.write_text("private")
+        Path(f"{target}.pub").write_text("ssh-ed25519 AAAATEST zfs-unlock\n")
         return MagicMock(stdout="", stderr="", returncode=0)
 
     with (
@@ -1013,8 +1014,9 @@ def test_keygen_creates_key_dir_privately(tmp_path: Path) -> None:
     key_path = key_dir / "zfs-unlock-receiver"
 
     def fake_run(cmd: list[str], *, check: bool = True) -> MagicMock:  # noqa: ARG001
-        key_path.write_text("private")
-        Path(f"{key_path}.pub").write_text("ssh-ed25519 AAAATEST zfs-unlock\n")
+        target = Path(cmd[cmd.index("-f") + 1])
+        target.write_text("private")
+        Path(f"{target}.pub").write_text("ssh-ed25519 AAAATEST zfs-unlock\n")
         return MagicMock(stdout="", stderr="", returncode=0)
 
     with (
@@ -1045,18 +1047,20 @@ def test_keygen_refuses_existing_key_without_overwrite(tmp_path: Path) -> None:
     assert key_path.read_text() == "old-private"
 
 
-def test_keygen_overwrite_removes_stale_key_before_ssh_keygen(tmp_path: Path) -> None:
-    """--overwrite unlinks the old key pair so ssh-keygen never prompts on stdout."""
+def test_keygen_overwrite_replaces_key_only_after_success(tmp_path: Path) -> None:
+    """--overwrite generates into a temp path so the old pair survives until success."""
     key_path = tmp_path / "zfs-unlock-receiver"
     pub_path = Path(f"{key_path}.pub")
     key_path.write_text("old-private")
     pub_path.write_text("old-public")
 
     def fake_run(cmd: list[str], *, check: bool = True) -> MagicMock:  # noqa: ARG001
-        assert not key_path.exists(), "stale private key must be removed before ssh-keygen runs"
-        assert not pub_path.exists(), "stale public key must be removed before ssh-keygen runs"
-        key_path.write_text("private")
-        pub_path.write_text("ssh-ed25519 AAAANEW zfs-unlock\n")
+        target = Path(cmd[cmd.index("-f") + 1])
+        assert target != key_path, "ssh-keygen must write to a temp path, not the live key"
+        assert key_path.read_text() == "old-private", "old private key must survive until success"
+        assert pub_path.read_text() == "old-public", "old public key must survive until success"
+        target.write_text("private")
+        Path(f"{target}.pub").write_text("ssh-ed25519 AAAANEW zfs-unlock\n")
         return MagicMock(stdout="", stderr="", returncode=0)
 
     with (
@@ -1067,6 +1071,29 @@ def test_keygen_overwrite_removes_stale_key_before_ssh_keygen(tmp_path: Path) ->
 
     assert result.exit_code == 0
     assert "ssh-ed25519 AAAANEW zfs-unlock" in result.stdout
+    assert key_path.read_text() == "private"
+    assert pub_path.read_text() == "ssh-ed25519 AAAANEW zfs-unlock\n"
+    assert list(tmp_path.glob("*.keygen-tmp*")) == [], "no temp files may be left behind"
+
+
+def test_keygen_failed_overwrite_preserves_existing_key(tmp_path: Path) -> None:
+    """A failing ssh-keygen leaves the existing key pair untouched."""
+    key_path = tmp_path / "zfs-unlock-receiver"
+    pub_path = Path(f"{key_path}.pub")
+    key_path.write_text("old-private")
+    pub_path.write_text("old-public")
+    error = subprocess.CalledProcessError(1, ["ssh-keygen"], stderr="No space left on device\n")
+
+    with (
+        patch("shutil.which", return_value="/usr/bin/ssh-keygen"),
+        patch("zfs_unlock.keygen.run_process", side_effect=error),
+    ):
+        result = runner.invoke(app, ["keygen", "--identity-file", str(key_path), "--overwrite"])
+
+    assert result.exit_code == 1
+    assert key_path.read_text() == "old-private"
+    assert pub_path.read_text() == "old-public"
+    assert list(tmp_path.glob("*.keygen-tmp*")) == [], "no temp files may be left behind"
 
 
 def test_keygen_failure_falls_back_to_stdout_detail(tmp_path: Path) -> None:
