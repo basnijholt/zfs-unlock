@@ -606,6 +606,37 @@ def test_cli_receiver_passes_zfs_path(tmp_path: Path) -> None:
     receiver_cls.return_value.handle.assert_called_once_with(request, stdin_text="")
 
 
+@pytest.mark.parametrize("duplicate_flag", ["--allow-file", "--zfs-path"])
+def test_cli_receiver_rejects_duplicate_configuration_options(tmp_path: Path, duplicate_flag: str) -> None:
+    """Caller-supplied args cannot replace receiver configuration pinned by a wrapper."""
+    allow_file = tmp_path / "allowed"
+    allow_file.write_text("tank/photos\n")
+    duplicate_value = str(tmp_path / ("attacker-allowed" if duplicate_flag == "--allow-file" else "attacker-zfs"))
+    response = MagicMock(returncode=0, stdout="locked\n", stderr="")
+    request = SimpleNamespace(requires_stdin=False)
+
+    with patch("zfs_unlock.cli.Receiver") as receiver_cls:
+        receiver_cls.return_value.parse.return_value = request
+        receiver_cls.return_value.handle.return_value = response
+        result = runner.invoke(
+            app,
+            [
+                "receiver",
+                "--allow-file",
+                str(allow_file),
+                "--zfs-path",
+                "/run/current-system/sw/bin/zfs",
+                duplicate_flag,
+                duplicate_value,
+                "status tank/photos",
+            ],
+        )
+
+    assert result.exit_code == 1
+    assert f"duplicate receiver option: {duplicate_flag}" in result.stderr
+    receiver_cls.assert_not_called()
+
+
 def test_doctor_reports_missing_identity_file(tmp_path: Path) -> None:
     """Doctor reports the configured identity file before trying SSH."""
     config_file = tmp_path / "config.yaml"
