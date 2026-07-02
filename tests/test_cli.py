@@ -12,7 +12,7 @@ import typer
 from typer.testing import CliRunner
 
 from zfs_unlock.cli import _receiver, app
-from zfs_unlock.client import _filter_datasets
+from zfs_unlock.client import filter_datasets
 from zfs_unlock.config import Dataset, find_config
 
 runner = CliRunner()
@@ -38,20 +38,40 @@ class TestFilterDatasets:
             Dataset(path="tank/syncthing", secret="pass2"),
         ]
 
-        assert _filter_datasets(datasets, None) == datasets
+        assert filter_datasets(datasets, None) == datasets
 
-    def test_single_filter_partial_match(self) -> None:
-        """Single filter matches partial path."""
+    def test_exact_filter_matches_single_dataset(self) -> None:
+        """An exact path selects only that dataset, never substring matches."""
         datasets = [
             Dataset(path="tank/photos", secret="pass1"),
-            Dataset(path="tank/syncthing", secret="pass2"),
+            Dataset(path="tank/photos-old", secret="pass2"),
             Dataset(path="tank/frigate", secret="pass3"),
         ]
 
-        result = _filter_datasets(datasets, ["photos"])
+        result = filter_datasets(datasets, ["tank/photos"])
 
-        assert len(result) == 1
-        assert result[0].path == "tank/photos"
+        assert [ds.path for ds in result] == ["tank/photos"]
+
+    def test_substring_filter_matches_nothing(self) -> None:
+        """A bare substring no longer selects datasets."""
+        datasets = [
+            Dataset(path="tank/photos", secret="pass1"),
+            Dataset(path="tank/syncthing", secret="pass2"),
+        ]
+
+        assert filter_datasets(datasets, ["photos"]) == []
+
+    def test_glob_filter_matches_multiple_datasets(self) -> None:
+        """Shell-style globs opt into matching several datasets."""
+        datasets = [
+            Dataset(path="tank/photos", secret="pass1"),
+            Dataset(path="tank/photos-old", secret="pass2"),
+            Dataset(path="ssd/frigate", secret="pass3"),
+        ]
+
+        result = filter_datasets(datasets, ["tank/*"])
+
+        assert [ds.path for ds in result] == ["tank/photos", "tank/photos-old"]
 
 
 class TestFindConfig:

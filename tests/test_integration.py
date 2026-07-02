@@ -204,9 +204,29 @@ def test_run_status_checks_all_matching_datasets() -> None:
     )
     runner = RecordingRunner(CommandResult(returncode=0, stdout="locked\n", stderr=""))
 
-    assert asyncio.run(run_status(config, dataset_filters=["photos"], runner=runner)) is True
+    assert asyncio.run(run_status(config, dataset_filters=["tank/photos"], runner=runner)) is True
 
     assert [call[0][-1] for call in runner.calls] == ["status tank/photos"]
+
+
+def test_run_status_supports_glob_filters() -> None:
+    """Glob filters select every matching dataset."""
+    config = Config(
+        host="zfs-host.example.lan",
+        datasets=[
+            Dataset(path="tank/photos", secret="pass1"),
+            Dataset(path="tank/media", secret="pass2"),
+            Dataset(path="ssd/frigate", secret="pass3"),
+        ],
+    )
+    runner = RecordingRunner(
+        CommandResult(returncode=0, stdout="locked\n", stderr=""),
+        CommandResult(returncode=0, stdout="locked\n", stderr=""),
+    )
+
+    assert asyncio.run(run_status(config, dataset_filters=["tank/*"], runner=runner)) is True
+
+    assert [call[0][-1] for call in runner.calls] == ["status tank/photos", "status tank/media"]
 
 
 def test_run_status_returns_false_for_unknown_status() -> None:

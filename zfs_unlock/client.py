@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import fnmatch
 import shlex
 from typing import TYPE_CHECKING
 
@@ -90,15 +91,19 @@ class ZfsUnlockClient:
         return True
 
 
-def _filter_datasets(datasets: list[Dataset], filters: list[str] | None) -> list[Dataset]:
-    """Filter datasets by path patterns."""
+def filter_datasets(datasets: list[Dataset], filters: list[str] | None) -> list[Dataset]:
+    """Select datasets whose path exactly matches or glob-matches any filter.
+
+    Exact-or-glob (not substring) so `-D tank/photo` can never also select
+    `tank/photos` — surprising for `unlock`, dangerous for `lock --force`.
+    """
     if not filters:
         return datasets
-    return [ds for ds in datasets if any(f in ds.path for f in filters)]
+    return [ds for ds in datasets if any(fnmatch.fnmatchcase(ds.path, pattern) for pattern in filters)]
 
 
 def _select_datasets(config: Config, filters: list[str] | None) -> list[Dataset] | None:
-    datasets = _filter_datasets(config.datasets, filters)
+    datasets = filter_datasets(config.datasets, filters)
     if not datasets:
         err_console.print("[yellow]No matching datasets found.[/yellow]")
         return None
