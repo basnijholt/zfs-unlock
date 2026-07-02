@@ -13,7 +13,7 @@ import typer
 from typer.testing import CliRunner
 
 from zfs_unlock.cli import _read_stdin_limited, _receiver, app
-from zfs_unlock.client import _filter_datasets
+from zfs_unlock.client import UnlockOutcome, _filter_datasets
 from zfs_unlock.config import Dataset, find_config
 from zfs_unlock.constants import MAX_PASSPHRASE_BYTES
 
@@ -157,9 +157,9 @@ def test_cli_with_config(tmp_path: Path) -> None:
     config_file.write_text("host: test\ndatasets:\n  tank/ds: pass")
     calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
 
-    async def fake_run_unlock(*args: object, **kwargs: object) -> bool:
+    async def fake_run_unlock(*args: object, **kwargs: object) -> UnlockOutcome:
         calls.append((args, kwargs))
-        return True
+        return UnlockOutcome.OK
 
     with patch("zfs_unlock.cli.run_unlock", new=fake_run_unlock):
         result = runner.invoke(app, ["unlock", "--config", str(config_file)])
@@ -168,13 +168,14 @@ def test_cli_with_config(tmp_path: Path) -> None:
     assert len(calls) == 1
 
 
-def test_cli_unlock_exits_nonzero_when_run_fails(tmp_path: Path) -> None:
+@pytest.mark.parametrize("outcome", [UnlockOutcome.FAILED, UnlockOutcome.UNREACHABLE])
+def test_cli_unlock_exits_nonzero_when_run_fails(tmp_path: Path, outcome: UnlockOutcome) -> None:
     """The unlock command reflects failed unlock work in its exit code."""
     config_file = tmp_path / "config.yaml"
     config_file.write_text("host: test\ndatasets:\n  tank/ds: pass")
 
-    async def fake_run_unlock(*_args: object, **_kwargs: object) -> bool:
-        return False
+    async def fake_run_unlock(*_args: object, **_kwargs: object) -> UnlockOutcome:
+        return outcome
 
     with patch("zfs_unlock.cli.run_unlock", new=fake_run_unlock):
         result = runner.invoke(app, ["unlock", "--config", str(config_file)])
@@ -183,7 +184,7 @@ def test_cli_unlock_exits_nonzero_when_run_fails(tmp_path: Path) -> None:
 
 
 def test_cli_daemon_mode(tmp_path: Path) -> None:
-    """Test CLI daemon smart polling loop."""
+    """Daemon polls fast only while the receiver is unreachable."""
     config_file = tmp_path / "config.yaml"
     config_file.write_text("host: test\ndatasets:\n  tank/ds: pass")
 
@@ -193,13 +194,52 @@ def test_cli_daemon_mode(tmp_path: Path) -> None:
         patch("asyncio.run") as mock_run,
         patch("time.sleep") as mock_sleep,
     ):
-        mock_run.side_effect = [True, False, KeyboardInterrupt]
+        mock_run.side_effect = [UnlockOutcome.OK, UnlockOutcome.UNREACHABLE, KeyboardInterrupt]
         result = runner.invoke(app, ["unlock", "--config", str(config_file), "--daemon", "--interval", "10"])
 
     assert result.exit_code == 0
     assert mock_run.call_count == DAEMON_RUN_CALLS
     mock_sleep.assert_any_call(10)
     mock_sleep.assert_any_call(1)
+
+
+def test_cli_daemon_does_not_claim_restored_on_failed_pass(tmp_path: Path) -> None:
+    """Recovering reachability with a still-failing pass must not print success."""
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("host: test\ndatasets:\n  tank/ds: pass")
+
+    fake_run_unlock = MagicMock(return_value=object())
+    with (
+        patch("zfs_unlock.cli.run_unlock", new=fake_run_unlock),
+        patch("asyncio.run") as mock_run,
+        patch("time.sleep"),
+    ):
+        mock_run.side_effect = [UnlockOutcome.UNREACHABLE, UnlockOutcome.FAILED, KeyboardInterrupt]
+        result = runner.invoke(app, ["unlock", "--config", str(config_file), "--daemon"])
+
+    stdout = ANSI_RE.sub("", result.stdout)
+    assert result.exit_code == 0
+    assert "Connection restored" not in stdout
+    assert "reachable again, but the unlock pass failed" in stdout
+
+
+def test_cli_daemon_keeps_normal_interval_on_non_connection_failures(tmp_path: Path) -> None:
+    """Persistent non-network failures must not hammer the receiver at 1s."""
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("host: test\ndatasets:\n  tank/ds: pass")
+
+    fake_run_unlock = MagicMock(return_value=object())
+    with (
+        patch("zfs_unlock.cli.run_unlock", new=fake_run_unlock),
+        patch("asyncio.run") as mock_run,
+        patch("time.sleep") as mock_sleep,
+    ):
+        mock_run.side_effect = [UnlockOutcome.FAILED, UnlockOutcome.FAILED, KeyboardInterrupt]
+        result = runner.invoke(app, ["unlock", "--config", str(config_file), "--daemon", "--interval", "10"])
+
+    assert result.exit_code == 0
+    assert mock_sleep.call_count == 2  # noqa: PLR2004
+    assert all(call.args == (10,) for call in mock_sleep.call_args_list)
 
 
 @pytest.mark.parametrize("interval", ["0", "-1"])
@@ -209,10 +249,10 @@ def test_cli_daemon_rejects_non_positive_interval(tmp_path: Path, interval: str)
     config_file.write_text("host: test\ndatasets:\n  tank/ds: pass")
     calls = 0
 
-    async def fake_run_unlock(*_args: object, **_kwargs: object) -> bool:
+    async def fake_run_unlock(*_args: object, **_kwargs: object) -> UnlockOutcome:
         nonlocal calls
         calls += 1
-        return True
+        return UnlockOutcome.OK
 
     with (
         patch("zfs_unlock.cli.run_unlock", new=fake_run_unlock),
@@ -653,6 +693,80 @@ def test_keygen_creates_unlock_key(tmp_path: Path) -> None:
     assert "ssh-ed25519 AAAATEST zfs-unlock" in result.stdout
     assert key_path.exists()
     assert Path(f"{key_path}.pub").exists()
+
+
+def test_service_install_linux_pins_current_executable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Service install writes a unit that runs the installed zfs-unlock binary."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    which = {"zfs-unlock": "/usr/local/bin/zfs-unlock"}
+    with (
+        patch("zfs_unlock.service.platform.system", return_value="Linux"),
+        patch("zfs_unlock.service.shutil.which", side_effect=which.get),
+        patch("zfs_unlock.service.run_process") as mock_run,
+    ):
+        result = runner.invoke(app, ["service", "install"])
+
+    assert result.exit_code == 0
+    unit = (tmp_path / ".config" / "systemd" / "user" / "zfs-unlock.service").read_text()
+    assert "ExecStart=/usr/local/bin/zfs-unlock unlock --daemon\n" in unit
+    assert "tool run" not in unit
+    assert mock_run.call_count == 2  # noqa: PLR2004
+
+
+def test_service_install_macos_pins_current_executable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Service install writes a launchd plist that runs the installed binary."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    which = {"zfs-unlock": "/usr/local/bin/zfs-unlock"}
+    with (
+        patch("zfs_unlock.service.platform.system", return_value="Darwin"),
+        patch("zfs_unlock.service.shutil.which", side_effect=which.get),
+        patch("zfs_unlock.service.run_process"),
+    ):
+        result = runner.invoke(app, ["service", "install"])
+
+    assert result.exit_code == 0
+    plist = (tmp_path / "Library" / "LaunchAgents" / "com.zfs_unlock.plist").read_text()
+    assert "    <string>/usr/local/bin/zfs-unlock</string>\n    <string>unlock</string>" in plist
+    assert "tool" not in plist
+
+
+def test_service_install_falls_back_to_uv_with_warning(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without zfs-unlock on PATH the service falls back to uv tool run."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    which = {"uv": "/opt/uv/bin/uv"}
+    with (
+        patch("zfs_unlock.service.platform.system", return_value="Linux"),
+        patch("zfs_unlock.service.shutil.which", side_effect=which.get),
+        patch("zfs_unlock.service.run_process"),
+    ):
+        result = runner.invoke(app, ["service", "install"])
+
+    assert result.exit_code == 0
+    assert "zfs-unlock not found on PATH" in ANSI_RE.sub("", result.output)
+    unit = (tmp_path / ".config" / "systemd" / "user" / "zfs-unlock.service").read_text()
+    assert "ExecStart=/opt/uv/bin/uv tool run zfs-unlock unlock --daemon\n" in unit
+
+
+def test_service_install_fails_without_executable_or_uv(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Service install fails cleanly when nothing can run the daemon."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    with (
+        patch("zfs_unlock.service.platform.system", return_value="Linux"),
+        patch("zfs_unlock.service.shutil.which", return_value=None),
+    ):
+        result = runner.invoke(app, ["service", "install"])
+
+    assert result.exit_code == 1
+    assert "neither zfs-unlock nor uv found" in ANSI_RE.sub("", result.output)
 
 
 def test_service_status_linux() -> None:

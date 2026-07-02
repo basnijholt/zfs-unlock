@@ -8,6 +8,7 @@ from pathlib import Path
 DATASET_NAME_RE = re.compile(r"^[A-Za-z0-9_.:-]+(?:/[A-Za-z0-9_.:-]+)*$")
 COMMAND_TIMEOUT_RETURNCODE = 124
 COMMAND_STARTUP_ERROR_RETURNCODE = 127
+SSH_CONNECTION_ERROR_RETURNCODE = 255
 
 # The receiver runs as root; bound what an SSH client can make it read.
 MAX_PASSPHRASE_BYTES = 64 * 1024
