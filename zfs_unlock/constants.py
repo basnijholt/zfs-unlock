@@ -6,8 +6,15 @@ import re
 from pathlib import Path
 
 DATASET_NAME_RE = re.compile(r"^[A-Za-z0-9_.:-]+(?:/[A-Za-z0-9_.:-]+)*$")
-COMMAND_TIMEOUT_RETURNCODE = 124
-COMMAND_STARTUP_ERROR_RETURNCODE = 127
+# Sentinels for failures detected locally by SubprocessRunner. Deliberately
+# outside 0-255: ssh forwards the remote command's exit status verbatim, so an
+# in-range sentinel (124/127) would make a remote command exiting with that
+# code (e.g. "receiver not installed" -> 127) look like a local timeout or
+# startup failure and wrongly trip the daemon's unreachable/panic handling.
+COMMAND_TIMEOUT_RETURNCODE = 1124
+COMMAND_STARTUP_ERROR_RETURNCODE = 1127
+# ssh's own exit code for connection/authentication failures. A remote command
+# exiting 255 is indistinguishable — an inherent ssh limitation.
 SSH_CONNECTION_ERROR_RETURNCODE = 255
 
 # The receiver runs as root; bound what an SSH client can make it read.

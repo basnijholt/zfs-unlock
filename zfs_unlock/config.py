@@ -14,6 +14,28 @@ from .constants import CONFIG_SEARCH_PATHS, DATASET_NAME_RE, EXAMPLE_CONFIG
 from .output import err_console
 
 
+class DuplicateKeyError(yaml.YAMLError):
+    """A YAML mapping in the config repeats a key.
+
+    PyYAML's default is silent last-wins, which would drop the first
+    passphrase of a dataset listed twice without any warning. The message
+    only ever names mapping keys (config field names, dataset paths) — never
+    values, which may be inline passphrases.
+    """
+
+
+class _UniqueKeyLoader(yaml.SafeLoader):
+    def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> dict[Any, Any]:  # noqa: FBT001
+        seen = set()
+        for key_node, _ in node.value:
+            key = self.construct_object(key_node, deep=deep)
+            if key in seen:
+                msg = f"duplicate key {key!r} at line {key_node.start_mark.line + 1}"
+                raise DuplicateKeyError(msg)
+            seen.add(key)
+        return super().construct_mapping(node, deep)
+
+
 class SecretsMode(StrEnum):
     """How to interpret secret values."""
 
@@ -28,8 +50,19 @@ def _read_secret_file(path: Path) -> str:
     Always UTF-8: the passphrase is encoded as UTF-8 on the wire and decoded as
     UTF-8 by the receiver, so a locale-dependent read (e.g. LANG=C) would
     corrupt or reject a correct secret.
+
+    Strip exactly one trailing line terminator (the one an editor or
+    `echo` appends), never more: a passphrase that intentionally ends in a
+    newline must survive the round trip. newline="" disables universal-newline
+    translation, which would otherwise silently rewrite any CR or CRLF
+    inside the passphrase itself.
     """
-    return path.read_text(encoding="utf-8").rstrip("\r\n")
+    with path.open(encoding="utf-8", newline="") as fh:
+        text = fh.read()
+    for suffix in ("\r\n", "\n", "\r"):
+        if text.endswith(suffix):
+            return text.removesuffix(suffix)
+    return text
 
 
 def _resolve_secret(value: str, mode: SecretsMode) -> str:
@@ -85,6 +118,20 @@ class Config(BaseModel):
 
     host: str
     user: str = "zfs-unlock"
+
+    @field_validator("host", "user")
+    @classmethod
+    def _validate_ssh_word(cls, value: str) -> str:
+        """Reject values ssh would parse as options instead of a destination.
+
+        `host: "-oProxyCommand=..."` would otherwise become an ssh option on
+        the client command line — local command execution from a config typo.
+        """
+        if not value or value.startswith("-"):
+            msg = "must not be empty or start with '-'"
+            raise ValueError(msg)
+        return value
+
     port: Annotated[int, Field(ge=1, le=65535)] = 22
     identity_file: Path | None = None
     # Bounded above so YAML `.inf` (or an absurd value) cannot disable the
@@ -104,7 +151,7 @@ class Config(BaseModel):
 
     @classmethod
     def from_yaml(cls, path: Path) -> Config:  # noqa: D102
-        raw_data = yaml.safe_load(path.read_text())
+        raw_data = yaml.load(path.read_text(), Loader=_UniqueKeyLoader)  # noqa: S506 - SafeLoader subclass
         if raw_data is None:
             raw_data = {}
         if not isinstance(raw_data, dict):
@@ -134,6 +181,10 @@ def load_config(config_path: Path | None) -> tuple[Path, Config]:
 
     try:
         config = Config.from_yaml(config_path)
+    except DuplicateKeyError as exc:
+        # Safe to print: the message names mapping keys, never values.
+        err_console.print(f"[red]Invalid config: {exc}[/red]")
+        raise typer.Exit(1) from exc
     except yaml.YAMLError as exc:
         # Never print the YAML error itself: PyYAML embeds the offending source
         # line verbatim, which may contain an inline passphrase.

@@ -26,11 +26,20 @@ Use `--interval` to change the relaxed interval:
 zfs-unlock unlock --daemon --interval 60
 ```
 
-Preview actions without sending passphrases:
+Preview actions without sending passphrases (`-n` is the short form):
 
 ```bash
 zfs-unlock unlock --dry-run
 ```
+
+Select a subset of the configured datasets with `-D`/`--dataset` (exact path or glob, repeatable):
+
+```bash
+zfs-unlock unlock -D 'tank/*'
+```
+
+If a dataset was unlocked but a mount failed (status shows `unlocked, not fully mounted`),
+running `zfs-unlock unlock` again remounts the subtree; the daemon does this automatically.
 
 ## Status and Doctor
 
@@ -45,6 +54,8 @@ Check config, key, network, permissions, and receiver status:
 ```bash
 zfs-unlock doctor
 ```
+
+Both accept `-D`/`--dataset` to restrict the check to matching datasets.
 
 ## Lock
 
@@ -95,7 +106,7 @@ datasets:
 ## NixOS Receiver Options
 
 ```nix
-services.zfsUnlock.receiver = {
+services.zfs-unlock.receiver = {
   enable = true;
   allowedFrom = [ "192.168.1.50" ];
   authorizedKeys = [ "ssh-ed25519 AAAA... unlock-device" ];
@@ -122,7 +133,7 @@ Common receiver options:
 ## NixOS Client Options
 
 ```nix
-services.zfsUnlock.client = {
+services.zfs-unlock.client = {
   enable = true;
   user = "alice";
   group = "users";
@@ -147,13 +158,13 @@ Common client options:
 
 ## Portable Service Commands
 
-On NixOS, prefer the `services.zfsUnlock.client` module.
+On NixOS, prefer the `services.zfs-unlock.client` module.
 The portable CLI installer requires `uv` and auto-detects Linux systemd or macOS launchd:
 
 ```bash
 zfs-unlock service install
 zfs-unlock service status
-zfs-unlock service logs
+zfs-unlock service logs             # follows by default; --no-follow to print and exit
 zfs-unlock service uninstall
 ```
 

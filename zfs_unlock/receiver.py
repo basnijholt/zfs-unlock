@@ -78,6 +78,9 @@ class Receiver:
                 return self._parse_dataset_request(action, args)
             case _ReceiverAction.LOCK:
                 return self._parse_lock_request(args)
+            case _:  # pragma: no cover - unreachable while the enum has three members
+                # Fail closed if a new action is ever added without a parser.
+                return self._error("unsupported command")
 
     def _parse_dataset_request(self, action: _ReceiverAction, args: list[str]) -> _ReceiverRequest | CommandResult:
         if len(args) != _DATASET_COMMAND_ARG_COUNT:
@@ -148,8 +151,23 @@ class Receiver:
         if status == "unavailable":
             return CommandResult(returncode=0, stdout="locked\n", stderr="")
         if status == "available":
-            return CommandResult(returncode=0, stdout="unlocked\n", stderr="")
+            return self._unlocked_status(dataset)
         return CommandResult(returncode=0, stdout="unknown\n", stderr="")
+
+    def _unlocked_status(self, dataset: str) -> CommandResult:
+        """Report unlocked vs unlocked-unmounted for a dataset with its key loaded.
+
+        The distinct unlocked-unmounted status lets the client send an unlock
+        request, whose already-unlocked path remounts the subtree. Without it,
+        a mount failure after load-key would leave the dataset
+        unlocked-but-unmounted forever: every later status would say
+        "unlocked" and nothing would retry the mount.
+        """
+        unmounted = self._unmounted_mountable(dataset)
+        if isinstance(unmounted, CommandResult):
+            return unmounted
+        stdout = "unlocked-unmounted\n" if unmounted else "unlocked\n"
+        return CommandResult(returncode=0, stdout=stdout, stderr="")
 
     def _unlock(self, dataset: str, *, stdin_text: str) -> CommandResult:
         if error := self._validate_dataset(dataset):
@@ -159,13 +177,20 @@ class Receiver:
         if status.returncode != 0:
             return CommandResult(returncode=1, stdout="", stderr=status.stderr)
         if status.stdout.strip() == "available":
-            return CommandResult(returncode=0, stdout=f"already unlocked {dataset}\n", stderr="")
+            # Already unlocked: reconcile mounts anyway, so a repeated unlock
+            # heals the unlocked-but-unmounted state a failed mount left behind.
+            mount_error = self._mount_subtree(dataset)
+            return mount_error or CommandResult(returncode=0, stdout=f"already unlocked {dataset}\n", stderr="")
         if not stdin_text:
             return self._error("missing passphrase on stdin")
 
         result = self.runner.run([self.zfs_path, "load-key", "-L", "prompt", dataset], input_text=stdin_text)
         if result.returncode != 0:
-            return CommandResult(returncode=1, stdout="", stderr=result.stderr)
+            # Never forward `zfs load-key` stderr to the SSH client: a future
+            # or patched zfs that echoed any part of the key material in an
+            # error would otherwise leak it to a receiver-key holder probing
+            # with guessed passphrases.
+            return self._error(f"load-key failed for {dataset} (exit {result.returncode})")
         mount_error = self._mount_subtree(dataset)
         return mount_error or CommandResult(returncode=0, stdout=f"unlocked {dataset}\n", stderr="")
 
@@ -189,11 +214,9 @@ class Receiver:
             rows.append(fields)
         return rows
 
-    def _mount_subtree(self, dataset: str) -> CommandResult | None:
-        """Mount unmounted datasets in the unlocked subtree, parents first.
+    def _unmounted_mountable(self, dataset: str) -> list[str] | CommandResult:
+        """List unmounted-but-mountable datasets in a subtree, parents first.
 
-        Deliberately narrower than `zfs mount -a`, which would mount every
-        mountable dataset on the host instead of only the allowlisted subtree.
         Datasets whose own key is still unavailable (nested encryption roots)
         are skipped, matching `zfs mount -a` behavior.
         """
@@ -206,7 +229,19 @@ class Receiver:
             for name, canmount, mounted, keystatus in rows
             if canmount == "on" and mounted == "no" and keystatus != "unavailable"
         ]
-        for name in sorted(mountable, key=lambda name: name.count("/")):
+        return sorted(mountable, key=lambda name: name.count("/"))
+
+    def _mount_subtree(self, dataset: str) -> CommandResult | None:
+        """Mount unmounted datasets in the unlocked subtree, parents first.
+
+        Deliberately narrower than `zfs mount -a`, which would mount every
+        mountable dataset on the host instead of only the allowlisted subtree.
+        """
+        mountable = self._unmounted_mountable(dataset)
+        if isinstance(mountable, CommandResult):
+            return mountable
+
+        for name in mountable:
             mount = self.runner.run([self.zfs_path, "mount", name])
             if mount.returncode != 0:
                 return CommandResult(returncode=1, stdout="", stderr=mount.stderr)

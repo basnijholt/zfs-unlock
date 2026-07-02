@@ -6,7 +6,7 @@ from textwrap import dedent
 import pytest
 from pydantic import ValidationError
 
-from zfs_unlock.config import Config, Dataset, SecretsMode, _resolve_secret
+from zfs_unlock.config import Config, Dataset, DuplicateKeyError, SecretsMode, _resolve_secret
 from zfs_unlock.constants import DEFAULT_IDENTITY_FILE, EXAMPLE_CONFIG
 
 DEFAULT_PORT = 22
@@ -243,3 +243,47 @@ def test_example_config_documents_every_field() -> None:
 
     for field in Config.model_fields:
         assert field in example, f"config.example.yaml is missing the `{field}` field"
+
+
+def test_host_and_user_reject_leading_dash() -> None:
+    """Values ssh would parse as options are rejected at config time."""
+    with pytest.raises(ValidationError, match="host"):
+        Config(host="-oProxyCommand=evil", datasets=[])
+    with pytest.raises(ValidationError, match="user"):
+        Config(host="zfs.example", user="-oProxyCommand=evil", datasets=[])
+    with pytest.raises(ValidationError, match="host"):
+        Config(host="", datasets=[])
+
+
+def test_secret_file_strips_exactly_one_line_terminator(tmp_path: Path) -> None:
+    """One trailing newline is editor noise; anything beyond it is passphrase."""
+    cases = {
+        "pw\n": "pw",
+        "pw\r\n": "pw",
+        "pw\r": "pw",
+        "pw\n\n": "pw\n",
+        "pw\r\n\r\n": "pw\r\n",
+        "pw": "pw",
+        " pw ": " pw ",
+    }
+    for raw, expected in cases.items():
+        secret_file = tmp_path / "secret"
+        secret_file.write_bytes(raw.encode())
+        assert _resolve_secret(str(secret_file), SecretsMode.FILES) == expected, repr(raw)
+
+
+def test_from_yaml_rejects_duplicate_dataset_keys(tmp_path: Path) -> None:
+    """Duplicate dataset keys must error instead of silently dropping one passphrase."""
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        dedent(
+            """\
+            host: zfs.example
+            datasets:
+              tank/photos: first-pass
+              tank/photos: second-pass
+            """,
+        ),
+    )
+    with pytest.raises(DuplicateKeyError, match="duplicate key 'tank/photos'"):
+        Config.from_yaml(config_file)

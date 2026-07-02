@@ -48,7 +48,7 @@ def test_nixos_receiver_module_generates_restricted_receiver_config() -> None:
           modules = [
             flake.nixosModules.receiver
             ({{
-              services.zfsUnlock.receiver = {{
+              services.zfs-unlock.receiver = {{
                 enable = true;
                 allowedFrom = [ "192.0.2.7" ];
                 authorizedKeys = [ "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestOnlyKey pi4-zfs-unlock" ];
@@ -92,7 +92,7 @@ def test_nixos_receiver_module_defaults_to_flake_python_package() -> None:
           modules = [
             flake.nixosModules.receiver
             ({{
-              services.zfsUnlock.receiver = {{
+              services.zfs-unlock.receiver = {{
                 enable = true;
                 allowedFrom = [ "192.0.2.7" ];
                 authorizedKeys = [ "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestOnlyKey pi4-zfs-unlock" ];
@@ -104,7 +104,7 @@ def test_nixos_receiver_module_defaults_to_flake_python_package() -> None:
       in {{
         hasPackage = builtins.hasAttr system flake.packages
           && builtins.hasAttr "default" flake.packages.${{system}};
-        usesPackagedApp = eval.config.services.zfsUnlock.receiver.package.passthru.isZfsUnlockPackage or false;
+        usesPackagedApp = eval.config.services.zfs-unlock.receiver.package.passthru.isZfsUnlockPackage or false;
       }}
     """
     result = run_nix_eval(expr, repo)
@@ -127,7 +127,7 @@ def test_nixos_receiver_module_enables_linger_by_default() -> None:
           modules = [
             flake.nixosModules.receiver
             ({{
-              services.zfsUnlock.receiver = {{
+              services.zfs-unlock.receiver = {{
                 enable = true;
                 allowedFrom = [ "192.0.2.7" ];
                 authorizedKeys = [ "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestOnlyKey pi4-zfs-unlock" ];
@@ -161,7 +161,7 @@ def test_nixos_receiver_module_can_disable_linger() -> None:
           modules = [
             flake.nixosModules.receiver
             ({{
-              services.zfsUnlock.receiver = {{
+              services.zfs-unlock.receiver = {{
                 enable = true;
                 enableLinger = false;
                 allowedFrom = [ "192.0.2.7" ];
@@ -217,7 +217,7 @@ def test_nixos_receiver_module_rejects_unsafe_policy_strings(override: str, mess
             flake.nixosModules.receiver
             ({{
               system.stateVersion = "26.11";
-              services.zfsUnlock.receiver = receiverConfig;
+              services.zfs-unlock.receiver = receiverConfig;
             }})
           ];
         }};
@@ -248,7 +248,7 @@ def test_nixos_client_module_generates_packaged_daemon_service() -> None:
                 group = "users";
                 home = "/home/alice";
               }};
-              services.zfsUnlock.client = {{
+              services.zfs-unlock.client = {{
                 enable = true;
                 user = "alice";
                 group = "users";
@@ -259,7 +259,7 @@ def test_nixos_client_module_generates_packaged_daemon_service() -> None:
         }};
         service = eval.config.systemd.services.zfs-unlock;
       in {{
-        usesPackagedApp = eval.config.services.zfsUnlock.client.package.passthru.isZfsUnlockPackage or false;
+        usesPackagedApp = eval.config.services.zfs-unlock.client.package.passthru.isZfsUnlockPackage or false;
         systemPackages = builtins.map (pkg: pkg.pname or pkg.name) eval.config.environment.systemPackages;
         user = service.serviceConfig.User;
         group = service.serviceConfig.Group;
@@ -295,7 +295,7 @@ def test_nixos_client_module_sandboxes_passphrase_daemon() -> None:
           modules = [
             flake.nixosModules.client
             ({{
-              services.zfsUnlock.client.enable = true;
+              services.zfs-unlock.client.enable = true;
             }})
           ];
         }};

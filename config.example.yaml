@@ -1,5 +1,8 @@
 # ZFS Unlock Configuration
 # Copy to ~/.config/zfs-unlock/config.yaml on the off-box unlock device.
+# Never put real passphrases in a copy that lives inside the repository:
+# prefer file-backed secrets (values pointing at chmod-600 files) so the
+# config itself stays safe to back up and share.
 
 host: zfs-host.example.lan
 user: zfs-unlock

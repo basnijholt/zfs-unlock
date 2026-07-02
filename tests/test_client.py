@@ -328,3 +328,54 @@ def test_lock_uses_force_flag() -> None:
     assert asyncio.run(client.lock(config.datasets[0], force=True)) is True
 
     assert runner.calls[0][0][-1] == "lock tank/photos --force"
+
+
+def test_is_locked_maps_unlocked_unmounted_to_needs_mount() -> None:
+    """unlocked-unmounted marks the dataset for a remounting unlock pass."""
+    config = Config(host="zfs-host.example.lan", datasets=[Dataset(path="tank/photos", secret="pass")])
+    runner = RecordingRunner(CommandResult(returncode=0, stdout="unlocked-unmounted\n", stderr=""))
+    client = ZfsUnlockClient(config, runner=runner)
+
+    status = asyncio.run(client.is_locked(config.datasets[0]))
+
+    assert status.locked is False
+    assert status.needs_mount is True
+
+
+def test_is_locked_names_dataset_on_unexpected_status(capsys: pytest.CaptureFixture[str]) -> None:
+    """An unexpected receiver status names the dataset instead of failing silently."""
+    config = Config(host="zfs-host.example.lan", datasets=[Dataset(path="tank/photos", secret="pass")])
+    runner = RecordingRunner(CommandResult(returncode=0, stdout="unknown\n", stderr=""))
+    client = ZfsUnlockClient(config, runner=runner)
+
+    status = asyncio.run(client.is_locked(config.datasets[0]))
+
+    assert status.locked is None
+    captured = capsys.readouterr()
+    assert "tank/photos" in captured.err
+    assert "unknown" in captured.err
+
+
+def test_run_unlock_remounts_unlocked_unmounted_dataset() -> None:
+    """The unlock pass sends an unlock (which remounts) for unlocked-unmounted datasets."""
+    config = Config(host="zfs-host.example.lan", datasets=[Dataset(path="tank/photos", secret="pass")])
+    runner = RecordingRunner(
+        CommandResult(returncode=0, stdout="unlocked-unmounted\n", stderr=""),
+        CommandResult(returncode=0, stdout="already unlocked tank/photos\n", stderr=""),
+    )
+
+    outcome = asyncio.run(run_unlock(config, runner=runner))
+
+    assert outcome is UnlockOutcome.OK
+    remote_commands = [call[0][-1] for call in runner.calls]
+    assert remote_commands == ["status tank/photos", "unlock tank/photos"]
+
+
+def test_remote_exit_127_is_not_a_connection_error() -> None:
+    """A misinstalled receiver (remote 127) must not look like an unreachable host."""
+    config = Config(host="zfs-host.example.lan", datasets=[Dataset(path="tank/photos", secret="pass")])
+    runner = RecordingRunner(CommandResult(returncode=127, stdout="", stderr="command not found"))
+
+    outcome = asyncio.run(run_unlock(config, runner=runner, quiet=True))
+
+    assert outcome is UnlockOutcome.FAILED

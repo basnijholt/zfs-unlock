@@ -39,10 +39,15 @@ class UnlockOutcome(StrEnum):
 
 @dataclass(frozen=True)
 class DatasetStatus:
-    """Lock status of a single dataset; ``locked`` is None when unknown."""
+    """Lock status of a single dataset; ``locked`` is None when unknown.
+
+    ``needs_mount`` marks the unlocked-but-unmounted state a failed mount
+    leaves behind; an unlock request remounts the subtree.
+    """
 
     locked: bool | None
     connection_error: bool = False
+    needs_mount: bool = False
 
 
 class ZfsUnlockClient:
@@ -101,6 +106,14 @@ class ZfsUnlockClient:
             if not quiet:
                 console.print(f"[green]OK[/green] {dataset.path}")
             return DatasetStatus(locked=False)
+        if status == "unlocked-unmounted":
+            if not quiet:
+                console.print(f"[yellow]![/yellow] {dataset.path} unlocked but not fully mounted")
+            return DatasetStatus(locked=False, needs_mount=True)
+        # Usually means the dataset in the receiver allowlist is not actually
+        # encrypted; name the dataset so the misconfiguration is findable.
+        if not quiet:
+            err_console.print(f"[red]unexpected receiver status for {dataset.path}: {status!r}[/red]")
         return DatasetStatus(locked=None)
 
     async def unlock(self, dataset: Dataset) -> bool:
@@ -202,7 +215,9 @@ async def run_unlock(
 
     failed = any(status.locked is None for status in statuses)
     for dataset, status in zip(datasets, statuses, strict=True):
-        if status.locked is True and not await client.unlock(dataset):
+        # needs_mount: the receiver's already-unlocked path remounts the
+        # subtree, healing the unlocked-but-unmounted state.
+        if (status.locked is True or status.needs_mount) and not await client.unlock(dataset):
             failed = True
     return UnlockOutcome.FAILED if failed else UnlockOutcome.OK
 
@@ -252,6 +267,9 @@ async def run_status(
             success = False
         elif status.locked is True:
             console.print(f"[yellow]LOCK[/yellow] {dataset.path} [dim]locked[/dim]")
+        elif status.needs_mount:
+            console.print(f"[yellow]OPEN[/yellow] {dataset.path} [dim]unlocked, not fully mounted[/dim]")
+            success = False
         else:
             console.print(f"[green]OPEN[/green] {dataset.path} [dim]unlocked[/dim]")
     return success

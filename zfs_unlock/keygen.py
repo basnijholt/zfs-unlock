@@ -65,5 +65,5 @@ def keygen(
 
     public_key = public_path.read_text().strip()
     print_ok(f"created {identity_path}")
-    console.print("\nPublic key for services.zfsUnlock.receiver.authorizedKeys:\n")
+    console.print("\nPublic key for services.zfs-unlock.receiver.authorizedKeys:\n")
     console.print(public_key)

@@ -1,7 +1,7 @@
 { config, lib, pkgs, ... }:
 
 let
-  cfg = config.services.zfsUnlock.client;
+  cfg = config.services.zfs-unlock.client;
 
   home = config.users.users.${cfg.user}.home or (
     if cfg.user == "root" then "/root" else "/home/${cfg.user}"
@@ -20,7 +20,7 @@ let
   ] ++ configArgs ++ cfg.extraArgs;
 in
 {
-  options.services.zfsUnlock.client = {
+  options.services.zfs-unlock.client = {
     enable = lib.mkEnableOption "the zfs-unlock client daemon";
 
     package = lib.mkOption {

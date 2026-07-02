@@ -128,6 +128,11 @@ async def _check_receiver_status(client: ZfsUnlockClient, dataset: Dataset) -> b
         print_ok(f"receiver status ok: {dataset.path} -> {status}")
         return True
 
+    if status == "unlocked-unmounted":
+        print_fail(f"receiver status: {dataset.path} unlocked but not fully mounted")
+        console.print("[yellow]hint:[/yellow] run [bold]zfs-unlock unlock[/bold] to remount the subtree")
+        return False
+
     print_fail(f"receiver status unexpected: {dataset.path} -> {status}")
     return False
 

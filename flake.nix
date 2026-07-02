@@ -63,14 +63,14 @@
           { lib, pkgs, ... }:
           {
             imports = [ ./nix/nixos-module.nix ];
-            services.zfsUnlock.receiver.package =
+            services.zfs-unlock.receiver.package =
               lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.default;
           };
         client =
           { lib, pkgs, ... }:
           {
             imports = [ ./nix/client-module.nix ];
-            services.zfsUnlock.client.package =
+            services.zfs-unlock.client.package =
               lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.default;
           };
       };
@@ -84,7 +84,7 @@
             modules = [
               self.nixosModules.receiver
               {
-                system.stateVersion = "26.11";
+                system.stateVersion = "26.05";
                 # Minimal bootable-ish config so forcing `config.assertions`
                 # below only surfaces real receiver-module failures.
                 boot.loader.grub.enable = false;
@@ -93,7 +93,7 @@
                   fsType = "tmpfs";
                 };
                 services.openssh.enable = true;
-                services.zfsUnlock.receiver = {
+                services.zfs-unlock.receiver = {
                   enable = true;
                   allowedFrom = [ "192.0.2.7" ];
                   authorizedKeys = [
