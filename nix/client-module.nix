@@ -89,6 +89,31 @@ in
         ExecStart = "${lib.getExe cfg.package} ${lib.escapeShellArgs execArgs}";
         Restart = "on-failure";
         RestartSec = "10s";
+
+        # The daemon reads dataset passphrases and pipes them to outbound ssh;
+        # it never writes outside the journal. Sandbox it accordingly: the
+        # filesystem stays read-only ($HOME config, secret files, and the SSH
+        # identity remain readable), privileges cannot grow, and only the
+        # address families ssh needs are available.
+        NoNewPrivileges = true;
+        ProtectSystem = "strict";
+        ProtectHome = "read-only";
+        PrivateTmp = true;
+        PrivateDevices = true;
+        ProtectKernelTunables = true;
+        ProtectKernelModules = true;
+        ProtectKernelLogs = true;
+        ProtectControlGroups = true;
+        ProtectClock = true;
+        ProtectHostname = true;
+        ProtectProc = "invisible";
+        RestrictAddressFamilies = [ "AF_INET" "AF_INET6" "AF_UNIX" ];
+        RestrictNamespaces = true;
+        RestrictRealtime = true;
+        RestrictSUIDSGID = true;
+        LockPersonality = true;
+        SystemCallArchitectures = "native";
+        UMask = "0077";
       } // lib.optionalAttrs (cfg.group != null) {
         Group = cfg.group;
       };
