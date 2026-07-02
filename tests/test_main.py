@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import pytest
+
 from zfs_unlock.config import is_safe_dataset_name
 from zfs_unlock.process import CommandResult
 from zfs_unlock.receiver import Receiver, _ReceiverRequest, parse_receiver_command
@@ -80,6 +82,32 @@ def test_receiver_rejects_dataset_not_in_allowlist(tmp_path: Path) -> None:
     assert isinstance(response, CommandResult)
     assert response.returncode == 1
     assert "not allowed" in response.stderr
+    assert runner.calls == []
+
+
+@pytest.mark.parametrize("action", ["status", "unlock", "lock"])
+@pytest.mark.parametrize("dataset", ["-L", "../etc/shadow", "tank/x;reboot"])
+def test_receiver_rejects_unsafe_dataset_name_even_when_allowlisted(
+    tmp_path: Path,
+    action: str,
+    dataset: str,
+) -> None:
+    """An unsafe dataset name is refused before the allowlist check, even if listed.
+
+    ``is_safe_dataset_name`` re-validates the allowlist file contents so an
+    option-looking or traversal token can never reach a root ``zfs`` invocation
+    as an operand. Deleting that guard from ``_validate_dataset`` makes this
+    test fail while the rest of the suite stays green.
+    """
+    allow_file = write_allowlist(tmp_path, dataset)
+    runner = RecordingLocalRunner()
+    receiver = Receiver(allow_file=allow_file, runner=runner)
+
+    response = receiver.parse([action, dataset])
+
+    assert isinstance(response, CommandResult)
+    assert response.returncode == 1
+    assert "unsafe dataset name" in response.stderr
     assert runner.calls == []
 
 
