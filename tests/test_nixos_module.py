@@ -283,6 +283,55 @@ def test_nixos_client_module_generates_packaged_daemon_service() -> None:
     assert any(path.endswith("-openssh-10.3p1") or "openssh" in path for path in data["path"])
 
 
+def test_nixos_client_module_sandboxes_passphrase_daemon() -> None:
+    """The passphrase-handling client daemon keeps its systemd sandbox."""
+    repo = Path(__file__).resolve().parents[1]
+    expr = f"""
+      let
+        flake = builtins.getFlake "path:{repo}";
+        system = builtins.currentSystem;
+        eval = flake.inputs.nixpkgs.lib.nixosSystem {{
+          inherit system;
+          modules = [
+            flake.nixosModules.client
+            ({{
+              services.zfsUnlock.client.enable = true;
+            }})
+          ];
+        }};
+      in eval.config.systemd.services.zfs-unlock.serviceConfig
+    """
+    result = run_nix_eval(expr, repo)
+
+    assert result.returncode == 0, result.stderr
+    service_config = json.loads(result.stdout)
+    # The daemon holds dataset passphrases (as root by default); a regression
+    # that drops the sandbox must fail loudly, not ship silently.
+    expected = {
+        "NoNewPrivileges": True,
+        "ProtectSystem": "strict",
+        "ProtectHome": "read-only",
+        "PrivateTmp": True,
+        "PrivateDevices": True,
+        "ProtectKernelTunables": True,
+        "ProtectKernelModules": True,
+        "ProtectKernelLogs": True,
+        "ProtectControlGroups": True,
+        "ProtectClock": True,
+        "ProtectHostname": True,
+        "ProtectProc": "invisible",
+        "RestrictAddressFamilies": ["AF_INET", "AF_INET6", "AF_UNIX"],
+        "RestrictNamespaces": True,
+        "RestrictRealtime": True,
+        "RestrictSUIDSGID": True,
+        "LockPersonality": True,
+        "SystemCallArchitectures": "native",
+        "UMask": "0077",
+    }
+    for key, value in expected.items():
+        assert service_config.get(key) == value, key
+
+
 def test_nix_package_version_comes_from_committed_version_file() -> None:
     """The Nix package reports the release version instead of a 0.0.0 commit fallback."""
     repo = Path(__file__).resolve().parents[1]
