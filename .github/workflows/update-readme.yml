@@ -7,12 +7,50 @@ on:
       - main
   pull_request:
 
+# Least privilege by default. Pull request runs execute untrusted code
+# (the PR's own package via `uvx --with .` and README CODE blocks), so they
+# must never receive a writable token. Only the push-to-main job elevates.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  update_readme:
+  verify:
+    # Pull requests: regenerate the README with untrusted PR code under a
+    # read-only token and fail if it is out of date. No write access.
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Run markdown-code-runner
+        run: uvx --with . markdown-code-runner README.md
+
+      - name: Verify README.md is up to date
+        run: |
+          if ! git diff --quiet README.md; then
+            echo "::error::README.md is out of date; run markdown-code-runner and commit."
+            git diff README.md
+            exit 1
+          fi
+
+  update_readme:
+    # Push to main: trusted code path that may commit the regenerated README.
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -48,4 +86,4 @@ jobs:
         uses: ad-m/github-push-action@881a6320fdb16eb5318c5054f31c218aec2b324c  # v1.3.0
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          branch: ${{ github.head_ref }}
+          branch: ${{ github.ref_name }}
