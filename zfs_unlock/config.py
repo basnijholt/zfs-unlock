@@ -134,7 +134,14 @@ def load_config(config_path: Path | None) -> tuple[Path, Config]:
 
     try:
         config = Config.from_yaml(config_path)
-    except (OSError, TypeError, ValueError, ValidationError, yaml.YAMLError) as exc:
+    except yaml.YAMLError as exc:
+        # Never print the YAML error itself: PyYAML embeds the offending source
+        # line verbatim, which may contain an inline passphrase.
+        mark = exc.problem_mark if isinstance(exc, yaml.MarkedYAMLError) else None
+        location = f" at line {mark.line + 1}, column {mark.column + 1}" if mark is not None else ""
+        err_console.print(f"[red]Invalid config: YAML syntax error{location}.[/red]")
+        raise typer.Exit(1) from exc
+    except (OSError, TypeError, ValueError, ValidationError) as exc:
         err_console.print(f"[red]Invalid config: {exc}[/red]")
         raise typer.Exit(1) from exc
 

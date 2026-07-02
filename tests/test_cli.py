@@ -225,6 +225,18 @@ def test_cli_malformed_yaml_reports_clean_error(tmp_path: Path) -> None:
     assert "Invalid config" in result.stderr
 
 
+def test_cli_malformed_yaml_does_not_echo_secrets(tmp_path: Path) -> None:
+    """YAML syntax errors never echo the offending line: it may hold a passphrase."""
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("host: zfs-host.example.lan\ndatasets:\n  tank/x: TOPSECRET_PASSPHRASE: oops\n")
+
+    result = runner.invoke(app, ["unlock", "--config", str(config_file)])
+
+    assert result.exit_code == 1
+    assert "Invalid config: YAML syntax error at line 3" in result.stderr
+    assert "TOPSECRET_PASSPHRASE" not in result.stderr
+
+
 def test_cli_with_config(tmp_path: Path) -> None:
     """Test CLI runs with config file."""
     config_file = tmp_path / "config.yaml"
@@ -700,6 +712,37 @@ def test_cli_receiver_passes_zfs_path(tmp_path: Path) -> None:
     receiver_cls.assert_called_once_with(allow_file=allow_file, zfs_path="/run/current-system/sw/bin/zfs")
     receiver_cls.return_value.parse.assert_called_once_with(["status", "tank/photos"])
     receiver_cls.return_value.handle.assert_called_once_with(request, stdin_text="")
+
+
+@pytest.mark.parametrize("duplicate_flag", ["--allow-file", "--zfs-path"])
+def test_cli_receiver_rejects_duplicate_configuration_options(tmp_path: Path, duplicate_flag: str) -> None:
+    """Caller-supplied args cannot replace receiver configuration pinned by a wrapper."""
+    allow_file = tmp_path / "allowed"
+    allow_file.write_text("tank/photos\n")
+    duplicate_value = str(tmp_path / ("attacker-allowed" if duplicate_flag == "--allow-file" else "attacker-zfs"))
+    response = MagicMock(returncode=0, stdout="locked\n", stderr="")
+    request = SimpleNamespace(requires_stdin=False)
+
+    with patch("zfs_unlock.cli.Receiver") as receiver_cls:
+        receiver_cls.return_value.parse.return_value = request
+        receiver_cls.return_value.handle.return_value = response
+        result = runner.invoke(
+            app,
+            [
+                "receiver",
+                "--allow-file",
+                str(allow_file),
+                "--zfs-path",
+                "/run/current-system/sw/bin/zfs",
+                duplicate_flag,
+                duplicate_value,
+                "status tank/photos",
+            ],
+        )
+
+    assert result.exit_code == 1
+    assert f"duplicate receiver option: {duplicate_flag}" in result.stderr
+    receiver_cls.assert_not_called()
 
 
 def test_doctor_reports_missing_identity_file(tmp_path: Path) -> None:

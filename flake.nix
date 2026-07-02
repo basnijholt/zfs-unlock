@@ -118,11 +118,13 @@
             else
               throw (nixpkgs.lib.concatMapStringsSep "\n" (a: a.message) failedAssertions);
           allowedDatasets = pkgs.writeText "allowed-datasets" allowedDatasetsText;
+          sudoers = pkgs.writeText "sudoers" eval.config.security.sudo.configFile;
         in
         {
           receiverModule = pkgs.runCommand "zfs-unlock-receiver-module-check" { } ''
             grep -qx "tank/photos" ${allowedDatasets}
             grep -qx "tank/syncthing" ${allowedDatasets}
+            grep -qE '^zfs-unlock[[:space:]]+ALL=\(root:root\)[[:space:]]+NOPASSWD:' ${sudoers}
             touch "$out"
           '';
         }

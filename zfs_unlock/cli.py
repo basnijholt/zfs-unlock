@@ -7,7 +7,7 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, TypeVar
 
 import typer
 
@@ -35,6 +35,38 @@ app = typer.Typer(
     add_completion=False,
     context_settings={"help_option_names": ["-h", "--help"]},
 )
+
+_DEFAULT_RECEIVER_ALLOW_FILE = Path("/etc/zfs-unlock/allowed-datasets")
+_DEFAULT_RECEIVER_ZFS_PATH = "zfs"
+_T = TypeVar("_T")
+
+
+def _single_receiver_option(
+    values: _T | list[_T] | tuple[_T, ...] | None,
+    *,
+    default: _T,
+    flag: str,
+) -> _T:
+    """Resolve a receiver option that a wrapper may pin, rejecting duplicates.
+
+    The SSH wrapper invokes ``receiver`` with pinned options and appends the
+    attacker-controlled ``SSH_ORIGINAL_COMMAND`` after them. Click resolves a
+    repeated single-valued option as last-wins, which would let that suffix
+    replace the pinned value. Every security-relevant receiver option must
+    therefore be declared as ``list[X] | None`` (so repeats accumulate instead
+    of overwriting) and be resolved through this helper, which exits if the
+    option was given more than once.
+    """
+    if values is None:
+        return default
+    if isinstance(values, list | tuple):
+        if len(values) > 1:
+            sys.stderr.write(f"duplicate receiver option: {flag}\n")
+            raise typer.Exit(1)
+        if not values:
+            return default
+        return values[0]
+    return values
 
 
 def _unlock(
@@ -154,15 +186,30 @@ def _read_passphrase(limit: int) -> str | None:
 def _receiver(
     ctx: typer.Context,
     allow_file: Annotated[
-        Path,
+        list[Path] | None,
         typer.Option("--allow-file", help="File containing allowed dataset names"),
-    ] = Path("/etc/zfs-unlock/allowed-datasets"),
+    ] = None,
     zfs_path: Annotated[
-        str,
+        list[str] | None,
         typer.Option("--zfs-path", help="Path to the zfs executable"),
-    ] = "zfs",
+    ] = None,
 ) -> None:
     """Run the restricted receiver."""
+    # These options are pinned by the SSH wrapper, which appends untrusted
+    # input after them. They must stay list-typed and go through
+    # _single_receiver_option so a duplicate cannot override the pinned value;
+    # any new receiver option needs the same treatment.
+    resolved_allow_file = _single_receiver_option(
+        allow_file,
+        default=_DEFAULT_RECEIVER_ALLOW_FILE,
+        flag="--allow-file",
+    )
+    resolved_zfs_path = _single_receiver_option(
+        zfs_path,
+        default=_DEFAULT_RECEIVER_ZFS_PATH,
+        flag="--zfs-path",
+    )
+
     try:
         args = list(ctx.args)
         if len(args) == 1:
@@ -174,7 +221,7 @@ def _receiver(
         sys.stderr.write(f"invalid receiver command: {exc}\n")
         raise typer.Exit(1) from exc
 
-    receiver_instance = Receiver(allow_file=allow_file, zfs_path=zfs_path)
+    receiver_instance = Receiver(allow_file=resolved_allow_file, zfs_path=resolved_zfs_path)
     request = receiver_instance.parse(args)
     if isinstance(request, CommandResult):
         response = request

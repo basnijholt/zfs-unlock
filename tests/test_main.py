@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import pytest
+
 from zfs_unlock.config import is_safe_dataset_name
 from zfs_unlock.process import CommandResult
-from zfs_unlock.receiver import Receiver, _ReceiverRequest, parse_receiver_command
+from zfs_unlock.receiver import Receiver, _ReceiverAction, _ReceiverRequest, parse_receiver_command
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -69,6 +71,42 @@ def test_parse_receiver_command_uses_shell_words() -> None:
     assert parse_receiver_command("lock tank/photos --force") == ["lock", "tank/photos", "--force"]
 
 
+def test_receiver_rejects_empty_command(tmp_path: Path) -> None:
+    """The receiver refuses an empty command without running anything."""
+    allow_file = write_allowlist(tmp_path, "tank/photos")
+    runner = RecordingLocalRunner()
+    receiver = Receiver(allow_file=allow_file, runner=runner)
+
+    response = receiver.parse([])
+
+    assert isinstance(response, CommandResult)
+    assert response.returncode == 1
+    assert "missing command" in response.stderr
+    assert runner.calls == []
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["reboot"],
+        ["cat", "/etc/shadow"],
+        ["unlock"],
+    ],
+)
+def test_receiver_rejects_unsupported_command(tmp_path: Path, args: list[str]) -> None:
+    """The receiver refuses verbs outside status/unlock/lock and malformed argument counts."""
+    allow_file = write_allowlist(tmp_path, "tank/photos")
+    runner = RecordingLocalRunner()
+    receiver = Receiver(allow_file=allow_file, runner=runner)
+
+    response = receiver.parse(args)
+
+    assert isinstance(response, CommandResult)
+    assert response.returncode == 1
+    assert "unsupported command" in response.stderr
+    assert runner.calls == []
+
+
 def test_receiver_rejects_dataset_not_in_allowlist(tmp_path: Path) -> None:
     """The receiver refuses datasets that are not explicitly allowlisted."""
     allow_file = write_allowlist(tmp_path, "tank/photos")
@@ -80,6 +118,109 @@ def test_receiver_rejects_dataset_not_in_allowlist(tmp_path: Path) -> None:
     assert isinstance(response, CommandResult)
     assert response.returncode == 1
     assert "not allowed" in response.stderr
+    assert runner.calls == []
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["unlock", "tank/media"],
+        ["lock", "tank/media"],
+        ["lock", "tank/media", "--force"],
+    ],
+)
+def test_receiver_parse_rejects_unlock_and_lock_dataset_not_in_allowlist(tmp_path: Path, args: list[str]) -> None:
+    """Parsing refuses unlock/lock requests for datasets that are not allowlisted."""
+    allow_file = write_allowlist(tmp_path, "tank/photos")
+    runner = RecordingLocalRunner()
+    receiver = Receiver(allow_file=allow_file, runner=runner)
+
+    response = receiver.parse(args)
+
+    assert isinstance(response, CommandResult)
+    assert response.returncode == 1
+    assert "not allowed" in response.stderr
+    assert runner.calls == []
+
+
+def test_receiver_missing_allow_file_rejects_all_datasets(tmp_path: Path) -> None:
+    """A missing allowlist file fails closed and rejects every dataset."""
+    runner = RecordingLocalRunner()
+    receiver = Receiver(allow_file=tmp_path / "missing-allowed-datasets", runner=runner)
+
+    response = receiver.parse(["status", "tank/photos"])
+
+    assert isinstance(response, CommandResult)
+    assert response.returncode == 1
+    assert "not allowed" in response.stderr
+    assert runner.calls == []
+
+
+def test_receiver_allowlist_skips_comments_and_blank_lines(tmp_path: Path) -> None:
+    """Allowlist parsing skips comments and blank lines and strips whitespace."""
+    allow_file = tmp_path / "allowed-datasets"
+    allow_file.write_text("# comment\ntank/photos\n\n   \n  tank/media  \n# tank/secret\n")
+    runner = RecordingLocalRunner()
+    receiver = Receiver(allow_file=allow_file, runner=runner)
+
+    assert receiver._allowed_datasets == frozenset({"tank/photos", "tank/media"})  # noqa: SLF001
+    assert isinstance(receiver.parse(["status", "tank/photos"]), _ReceiverRequest)
+    assert isinstance(receiver.parse(["status", "tank/media"]), _ReceiverRequest)
+
+    response = receiver.parse(["status", "tank/secret"])
+
+    assert isinstance(response, CommandResult)
+    assert response.returncode == 1
+    assert "not allowed" in response.stderr
+    assert runner.calls == []
+
+
+@pytest.mark.parametrize(
+    "request_",
+    [
+        _ReceiverRequest(action=_ReceiverAction.UNLOCK, dataset="tank/media"),
+        _ReceiverRequest(action=_ReceiverAction.LOCK, dataset="tank/media"),
+        _ReceiverRequest(action=_ReceiverAction.LOCK, dataset="tank/media", force=True),
+    ],
+)
+def test_receiver_handle_revalidates_forged_request_against_allowlist(
+    tmp_path: Path,
+    request_: _ReceiverRequest,
+) -> None:
+    """Handling re-checks the allowlist even for requests that bypassed parse validation."""
+    allow_file = write_allowlist(tmp_path, "tank/photos")
+    runner = RecordingLocalRunner()
+    receiver = Receiver(allow_file=allow_file, runner=runner)
+
+    response = receiver.handle(request_, stdin_text="secret-pass\n")
+
+    assert response.returncode == 1
+    assert "not allowed" in response.stderr
+
+
+@pytest.mark.parametrize("action", ["status", "unlock", "lock"])
+@pytest.mark.parametrize("dataset", ["-L", "../etc/shadow", "tank/x;reboot"])
+def test_receiver_rejects_unsafe_dataset_name_even_when_allowlisted(
+    tmp_path: Path,
+    action: str,
+    dataset: str,
+) -> None:
+    """An unsafe dataset name is refused before the allowlist check, even if listed.
+
+    ``is_safe_dataset_name`` re-validates the allowlist file contents so an
+    option-looking or traversal token can never reach a root ``zfs`` invocation
+    as an operand. Deleting that guard from ``_validate_dataset`` makes this
+    test fail while the rest of the suite stays green.
+    """
+    allow_file = write_allowlist(tmp_path, dataset)
+    runner = RecordingLocalRunner()
+    receiver = Receiver(allow_file=allow_file, runner=runner)
+
+    response = receiver.parse([action, dataset])
+
+    assert isinstance(response, CommandResult)
+    assert response.returncode == 1
+    assert "unsafe dataset name" in response.stderr
     assert runner.calls == []
 
 
@@ -233,6 +374,21 @@ def test_receiver_unlock_rejects_subtree_listing_outside_target(tmp_path: Path) 
     assert response.returncode == 1
     assert "outside target subtree" in response.stderr
     assert len(runner.calls) == 3  # noqa: PLR2004
+
+
+def test_receiver_unlock_rejects_empty_passphrase(tmp_path: Path) -> None:
+    """Receiver refuses to run load-key when stdin carried no passphrase."""
+    allow_file = write_allowlist(tmp_path, "tank/photos")
+    runner = RecordingLocalRunner(CommandResult(returncode=0, stdout="unavailable\n", stderr=""))
+    receiver = Receiver(allow_file=allow_file, runner=runner)
+
+    response = handle_request(receiver, "unlock", "tank/photos", stdin_text="")
+
+    assert response.returncode == 1
+    assert "missing passphrase on stdin" in response.stderr
+    assert runner.calls == [
+        (["zfs", "get", "-H", "-o", "value", "keystatus", "tank/photos"], None),
+    ]
 
 
 def test_receiver_unlock_skips_already_available_key(tmp_path: Path) -> None:

@@ -85,6 +85,8 @@ def test_run_remote_builds_ssh_command_with_identity_file(tmp_path: Path) -> Non
                 "-o",
                 "BatchMode=yes",
                 "-o",
+                "StrictHostKeyChecking=ask",
+                "-o",
                 "ConnectTimeout=5",
                 "-n",
                 "-o",
@@ -98,6 +100,25 @@ def test_run_remote_builds_ssh_command_with_identity_file(tmp_path: Path) -> Non
             12,
         ),
     ]
+
+
+def test_ssh_pins_strict_host_key_checking() -> None:
+    """Every ssh invocation pins StrictHostKeyChecking=ask on the command line.
+
+    Passphrase secrecy depends on host-key verification failing closed; the
+    command-line option overrides a user ssh_config with accept-new/no that
+    would otherwise silently trust a first-contact (MITM) host key.
+    """
+    config = Config(host="zfs-host.example.lan", datasets=[Dataset(path="tank/photos", secret="secret-pass")])
+    runner = RecordingRunner()
+    client = ZfsUnlockClient(config, runner=runner)
+
+    asyncio.run(client.is_locked(config.datasets[0]))
+    asyncio.run(client.unlock(config.datasets[0]))
+    asyncio.run(client.lock(config.datasets[0]))
+
+    for args, _, _ in runner.calls:
+        assert "StrictHostKeyChecking=ask" in args
 
 
 def test_unlock_keeps_stdin_open_for_passphrase() -> None:
@@ -232,6 +253,8 @@ def test_unlock_sends_passphrase_over_stdin() -> None:
                 "22",
                 "-o",
                 "BatchMode=yes",
+                "-o",
+                "StrictHostKeyChecking=ask",
                 "-o",
                 "ConnectTimeout=5",
                 "zfs-unlock@zfs-host.example.lan",

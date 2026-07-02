@@ -170,6 +170,7 @@ in
     security.sudo.extraRules = [
       {
         users = [ cfg.user ];
+        runAs = "root:root";
         commands = [
           {
             command = "${receiver}";
