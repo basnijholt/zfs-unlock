@@ -88,6 +88,14 @@ class TestDataset:
 
         assert ds.get_passphrase(SecretsMode.FILES) == "file-passphrase"
 
+    def test_dataset_repr_masks_secret(self) -> None:
+        """Dataset objects never expose the raw secret in repr/str."""
+        dataset = Dataset(path="tank/photos", secret="super-secret")
+
+        assert "super-secret" not in repr(dataset)
+        assert "super-secret" not in str(dataset)
+        assert dataset.get_passphrase(SecretsMode.INLINE) == "super-secret"
+
 
 class TestConfig:
     """Tests for Config model."""
@@ -174,14 +182,6 @@ class TestConfig:
             Config.from_yaml(config_file)
 
         assert "hidden-passphrase-value" not in str(exc_info.value)
-
-    def test_dataset_repr_masks_secret(self) -> None:
-        """Dataset objects never expose the raw secret in repr/str."""
-        dataset = Dataset(path="tank/photos", secret="super-secret")
-
-        assert "super-secret" not in repr(dataset)
-        assert "super-secret" not in str(dataset)
-        assert dataset.get_passphrase(SecretsMode.INLINE) == "super-secret"
 
     def test_from_yaml_rejects_unknown_top_level_keys(self, tmp_path: Path) -> None:
         """Unknown config keys are rejected instead of silently ignored."""
