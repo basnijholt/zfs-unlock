@@ -6,7 +6,11 @@ on:
     types: [published]
 
 jobs:
+  test:
+    uses: ./.github/workflows/pytest.yml
+
   deploy:
+    needs: test
     runs-on: ubuntu-latest
     environment:
       name: pypi
