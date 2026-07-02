@@ -275,6 +275,53 @@ def test_cli_daemon_keeps_normal_interval_on_non_connection_failures(tmp_path: P
     assert all(call.args == (10,) for call in mock_sleep.call_args_list)
 
 
+def test_cli_daemon_caps_panic_mode(tmp_path: Path) -> None:
+    """Persistent unreachability stops fast polling and backs off to the interval."""
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("host: test\ndatasets:\n  tank/ds: pass")
+
+    fake_run_unlock = MagicMock(return_value=object())
+    with (
+        patch("zfs_unlock.cli.run_unlock", new=fake_run_unlock),
+        patch("zfs_unlock.cli.PANIC_MODE_MAX_SECONDS", 2),
+        patch("asyncio.run") as mock_run,
+        patch("time.sleep") as mock_sleep,
+    ):
+        mock_run.side_effect = [UnlockOutcome.UNREACHABLE] * 3 + [KeyboardInterrupt]
+        result = runner.invoke(app, ["unlock", "--config", str(config_file), "--daemon", "--interval", "10"])
+
+    stdout = ANSI_RE.sub("", result.stdout)
+    assert result.exit_code == 0
+    assert [call.args[0] for call in mock_sleep.call_args_list] == [1, 1, 10]
+    assert "backing off to 10s" in stdout
+
+
+def test_cli_daemon_re_enters_panic_after_recovery(tmp_path: Path) -> None:
+    """A recovered receiver resets the panic budget so the next outage polls fast again."""
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("host: test\ndatasets:\n  tank/ds: pass")
+
+    fake_run_unlock = MagicMock(return_value=object())
+    with (
+        patch("zfs_unlock.cli.run_unlock", new=fake_run_unlock),
+        patch("zfs_unlock.cli.PANIC_MODE_MAX_SECONDS", 2),
+        patch("asyncio.run") as mock_run,
+        patch("time.sleep") as mock_sleep,
+    ):
+        mock_run.side_effect = [
+            UnlockOutcome.UNREACHABLE,
+            UnlockOutcome.UNREACHABLE,
+            UnlockOutcome.UNREACHABLE,  # backed off to interval
+            UnlockOutcome.OK,  # recovered -> resets budget
+            UnlockOutcome.UNREACHABLE,  # fresh outage polls fast again
+            KeyboardInterrupt,
+        ]
+        result = runner.invoke(app, ["unlock", "--config", str(config_file), "--daemon", "--interval", "10"])
+
+    assert result.exit_code == 0
+    assert [call.args[0] for call in mock_sleep.call_args_list] == [1, 1, 10, 10, 1]
+
+
 @pytest.mark.parametrize("interval", ["0", "-1"])
 def test_cli_daemon_rejects_non_positive_interval(tmp_path: Path, interval: str) -> None:
     """Daemon mode requires a positive polling interval."""

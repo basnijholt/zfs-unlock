@@ -12,8 +12,8 @@ from typing import Annotated
 import typer
 
 from .client import UnlockOutcome, run_lock, run_status, run_unlock
-from .config import load_config
-from .constants import MAX_PASSPHRASE_BYTES
+from .config import Config, load_config
+from .constants import MAX_PASSPHRASE_BYTES, PANIC_INTERVAL_SECONDS, PANIC_MODE_MAX_SECONDS
 from .diagnostics import doctor
 from .keygen import keygen
 from .output import console
@@ -53,32 +53,56 @@ def _unlock(
 
     if daemon:
         console.print(f"[bold]Running with smart polling (interval: {interval}s)[/bold]")
-        current_interval = interval
-        reachable = True
-
-        while True:
-            try:
-                outcome = asyncio.run(run_unlock(config, dry_run=dry_run, quiet=True, dataset_filters=dataset))
-                if outcome is UnlockOutcome.UNREACHABLE:
-                    if reachable:
-                        console.print("[yellow]Receiver unreachable. Switching to panic mode (1s interval).[/yellow]")
-                    current_interval = 1
-                else:
-                    if not reachable and outcome is UnlockOutcome.OK:
-                        console.print("[green]Connection restored.[/green]")
-                    elif not reachable:
-                        console.print("[yellow]Receiver reachable again, but the unlock pass failed.[/yellow]")
-                    current_interval = interval
-
-                reachable = outcome is not UnlockOutcome.UNREACHABLE
-                time.sleep(current_interval)
-            except KeyboardInterrupt:
-                console.print("\n[bold]Stopped[/bold]")
-                break
+        _run_daemon(config, interval=interval, dry_run=dry_run, dataset=dataset)
     else:
         outcome = asyncio.run(run_unlock(config, dry_run=dry_run, dataset_filters=dataset))
         if outcome is not UnlockOutcome.OK:
             raise typer.Exit(1)
+
+
+def _run_daemon(config: Config, *, interval: int, dry_run: bool, dataset: list[str] | None) -> None:
+    """Poll the receiver until interrupted, unlocking datasets as they appear.
+
+    While the receiver is unreachable we poll every ``PANIC_INTERVAL_SECONDS`` so a
+    just-rebooted host is unlocked promptly. That fast window is capped at
+    ``PANIC_MODE_MAX_SECONDS``: a genuinely persistent failure (wrong key, host-key
+    mismatch, host powered off) then backs off to ``interval`` instead of hammering
+    the host at 1s forever.
+    """
+    current_interval = interval
+    reachable = True
+    panic_elapsed = 0
+
+    while True:
+        try:
+            outcome = asyncio.run(run_unlock(config, dry_run=dry_run, quiet=True, dataset_filters=dataset))
+            if outcome is UnlockOutcome.UNREACHABLE:
+                if reachable:
+                    console.print("[yellow]Receiver unreachable. Switching to panic mode (1s interval).[/yellow]")
+                    panic_elapsed = 0
+                if panic_elapsed < PANIC_MODE_MAX_SECONDS:
+                    current_interval = PANIC_INTERVAL_SECONDS
+                else:
+                    if current_interval != interval:
+                        console.print(
+                            f"[yellow]Receiver still unreachable after {PANIC_MODE_MAX_SECONDS}s;"
+                            f" backing off to {interval}s.[/yellow]",
+                        )
+                    current_interval = interval
+                panic_elapsed += current_interval
+            else:
+                if not reachable and outcome is UnlockOutcome.OK:
+                    console.print("[green]Connection restored.[/green]")
+                elif not reachable:
+                    console.print("[yellow]Receiver reachable again, but the unlock pass failed.[/yellow]")
+                current_interval = interval
+                panic_elapsed = 0
+
+            reachable = outcome is not UnlockOutcome.UNREACHABLE
+            time.sleep(current_interval)
+        except KeyboardInterrupt:
+            console.print("\n[bold]Stopped[/bold]")
+            break
 
 
 def _lock(
