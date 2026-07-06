@@ -128,6 +128,15 @@
             touch "$out"
           '';
         }
+        # End-to-end VM test against real OpenZFS. Only x86_64-linux runs it in
+        # CI (KVM there); on other systems it would need cross-emulation.
+        // nixpkgs.lib.optionalAttrs (system == "x86_64-linux") {
+          integration = import ./nix/integration-test.nix {
+            inherit pkgs;
+            receiverModule = self.nixosModules.receiver;
+            zfsUnlockPackage = self.packages.${system}.default;
+          };
+        }
       );
     };
 }
