@@ -98,7 +98,10 @@ pkgs.testers.runNixOSTest {
     with subtest("plain lock is the safe path and refuses to disrupt a mounted dataset"):
         # `unload-key` fails on a busy (mounted) dataset; plain lock surfaces
         # that as a clean error rather than force-unmounting behind your back.
-        machine.fail(f"{ssh} lock tank/enc 2>&1")
+        # Assert on the message so a future failure for a *different* reason
+        # (e.g. an allowlist regression) doesn't silently satisfy this subtest.
+        out = machine.fail(f"{ssh} lock tank/enc 2>&1")
+        assert "busy" in out, out
         machine.succeed("test \"$(zfs get -H -o value keystatus tank/enc)\" = available")
 
     with subtest("lock --force unmounts the subtree and unloads the key"):
