@@ -40,7 +40,7 @@
               typer
             ];
 
-            SETUPTOOLS_SCM_PRETEND_VERSION = version;
+            env.SETUPTOOLS_SCM_PRETEND_VERSION = version;
 
             pythonImportsCheck = [ "zfs_unlock" ];
             doCheck = false;
