@@ -28,10 +28,7 @@
             pyproject = true;
             src = self;
 
-            build-system = with pythonPackages; [
-              hatch-vcs
-              hatchling
-            ];
+            build-system = [ pythonPackages.hatchling ];
 
             dependencies = with pythonPackages; [
               pydantic
@@ -39,8 +36,6 @@
               rich
               typer
             ];
-
-            env.SETUPTOOLS_SCM_PRETEND_VERSION = version;
 
             pythonImportsCheck = [ "zfs_unlock" ];
             doCheck = false;

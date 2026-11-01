@@ -38,14 +38,12 @@ Repository = "https://github.com/basnijholt/zfs-unlock"
 Issues = "https://github.com/basnijholt/zfs-unlock/issues"
 
 [build-system]
-requires = ["hatchling", "hatch-vcs"]
+requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.version]
-source = "vcs"
-
-[tool.hatch.build.hooks.vcs]
-version-file = "zfs_unlock/_version.py"
+path = "VERSION"
+pattern = "(?P<version>.+)"
 
 [dependency-groups]
 dev = [
