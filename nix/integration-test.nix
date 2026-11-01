@@ -51,10 +51,17 @@ pkgs.testers.runNixOSTest {
     };
 
   testScript = ''
-    ssh = (
-        "ssh -i /root/id_test -o StrictHostKeyChecking=no "
+    ssh_args = (
+        "-i /root/id_test -o StrictHostKeyChecking=no "
         "-o UserKnownHostsFile=/dev/null -o BatchMode=yes zfs-unlock@127.0.0.1"
     )
+    # machine.succeed/fail run commands with stdin attached to the test
+    # driver's command channel (the backdoor shell's /dev/hvc0). When ssh
+    # inherits that tty, the driver intermittently never gets the reply to its
+    # follow-up exit-status query and the test hangs until the global timeout.
+    # So every call that doesn't pipe a passphrase uses -n (stdin /dev/null).
+    ssh = f"ssh -n {ssh_args}"
+    ssh_with_stdin = f"ssh {ssh_args}"
 
     start_all()
     machine.wait_for_unit("sshd.service")
@@ -81,13 +88,13 @@ pkgs.testers.runNixOSTest {
         assert machine.succeed(f"{ssh} status tank/enc").strip() == "locked"
 
     with subtest("a wrong passphrase is refused and leaks nothing, dataset stays locked"):
-        out = machine.fail(f"printf 'not-the-passphrase\\n' | {ssh} unlock tank/enc 2>&1")
+        out = machine.fail(f"printf 'not-the-passphrase\\n' | {ssh_with_stdin} unlock tank/enc 2>&1")
         assert "load-key failed" in out, out
         assert "not-the-passphrase" not in out, "receiver must not echo attempted key material"
         machine.succeed("test \"$(zfs get -H -o value keystatus tank/enc)\" = unavailable")
 
     with subtest("the correct passphrase unlocks and mounts the subtree"):
-        out = machine.succeed(f"printf '${passphrase}\\n' | {ssh} unlock tank/enc")
+        out = machine.succeed(f"printf '${passphrase}\\n' | {ssh_with_stdin} unlock tank/enc")
         assert "unlocked tank/enc" in out, out
         machine.succeed("test \"$(zfs get -H -o value keystatus tank/enc)\" = available")
         machine.succeed("test \"$(zfs get -H -o value mounted tank/enc)\" = yes")
