@@ -221,16 +221,21 @@ class Receiver:
         """List unmounted-but-mountable datasets in a subtree, parents first.
 
         Datasets whose own key is still unavailable (nested encryption roots)
-        are skipped, matching `zfs mount -a` behavior.
+        are skipped, matching `zfs mount -a` behavior. So are mountpoint=none
+        and mountpoint=legacy datasets: `zfs mount` rejects them, and one such
+        failure would stop the rest of the subtree from mounting.
         """
-        rows = self._subtree_rows(dataset, ["canmount", "mounted", "keystatus"])
+        rows = self._subtree_rows(dataset, ["canmount", "mountpoint", "mounted", "keystatus"])
         if isinstance(rows, CommandResult):
             return rows
 
         mountable = [
             name
-            for name, canmount, mounted, keystatus in rows
-            if canmount == "on" and mounted == "no" and keystatus != "unavailable"
+            for name, canmount, mountpoint, mounted, keystatus in rows
+            if canmount == "on"
+            and mountpoint not in {"none", "legacy"}
+            and mounted == "no"
+            and keystatus != "unavailable"
         ]
         return sorted(mountable, key=lambda name: name.count("/"))
 

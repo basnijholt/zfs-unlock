@@ -287,9 +287,9 @@ def test_receiver_unlock_loads_key_from_stdin_and_mounts_subtree(tmp_path: Path)
         CommandResult(
             returncode=0,
             stdout=(
-                "tank/photos\ton\tno\tavailable\n"
-                "tank/photos/raw\ton\tno\tavailable\n"
-                "tank/photos/cache\toff\tno\tavailable\n"
+                "tank/photos\ton\t/mnt/tank/photos\tno\tavailable\n"
+                "tank/photos/raw\ton\t/mnt/tank/photos/raw\tno\tavailable\n"
+                "tank/photos/cache\toff\t/mnt/tank/photos/cache\tno\tavailable\n"
             ),
             stderr="",
         ),
@@ -305,7 +305,7 @@ def test_receiver_unlock_loads_key_from_stdin_and_mounts_subtree(tmp_path: Path)
     assert runner.calls == [
         (["zfs", "get", "-H", "-o", "value", "keystatus", "tank/photos"], None),
         (["zfs", "load-key", "-L", "prompt", "tank/photos"], "secret-pass\n"),
-        (["zfs", "list", "-H", "-o", "name,canmount,mounted,keystatus", "-r", "tank/photos"], None),
+        (["zfs", "list", "-H", "-o", "name,canmount,mountpoint,mounted,keystatus", "-r", "tank/photos"], None),
         (["zfs", "mount", "tank/photos"], None),
         (["zfs", "mount", "tank/photos/raw"], None),
     ]
@@ -320,9 +320,9 @@ def test_receiver_unlock_mount_skips_mounted_and_locked_children(tmp_path: Path)
         CommandResult(
             returncode=0,
             stdout=(
-                "tank/photos\ton\tyes\tavailable\n"
-                "tank/photos/raw\ton\tno\tavailable\n"
-                "tank/photos/vault\ton\tno\tunavailable\n"
+                "tank/photos\ton\t/mnt/tank/photos\tyes\tavailable\n"
+                "tank/photos/raw\ton\t/mnt/tank/photos/raw\tno\tavailable\n"
+                "tank/photos/vault\ton\t/mnt/tank/photos/vault\tno\tunavailable\n"
             ),
             stderr="",
         ),
@@ -342,7 +342,7 @@ def test_receiver_unlock_fails_when_mount_fails(tmp_path: Path) -> None:
     runner = RecordingLocalRunner(
         CommandResult(returncode=0, stdout="unavailable\n", stderr=""),
         CommandResult(returncode=0, stdout="", stderr=""),
-        CommandResult(returncode=0, stdout="tank/photos\ton\tno\tavailable\n", stderr=""),
+        CommandResult(returncode=0, stdout="tank/photos\ton\t/mnt/tank/photos\tno\tavailable\n", stderr=""),
         CommandResult(returncode=1, stdout="", stderr="mount failed\n"),
     )
     receiver = Receiver(allow_file=allow_file, runner=runner)
@@ -354,7 +354,7 @@ def test_receiver_unlock_fails_when_mount_fails(tmp_path: Path) -> None:
     assert runner.calls == [
         (["zfs", "get", "-H", "-o", "value", "keystatus", "tank/photos"], None),
         (["zfs", "load-key", "-L", "prompt", "tank/photos"], "secret-pass\n"),
-        (["zfs", "list", "-H", "-o", "name,canmount,mounted,keystatus", "-r", "tank/photos"], None),
+        (["zfs", "list", "-H", "-o", "name,canmount,mountpoint,mounted,keystatus", "-r", "tank/photos"], None),
         (["zfs", "mount", "tank/photos"], None),
     ]
 
@@ -365,7 +365,7 @@ def test_receiver_unlock_rejects_subtree_listing_outside_target(tmp_path: Path) 
     runner = RecordingLocalRunner(
         CommandResult(returncode=0, stdout="unavailable\n", stderr=""),
         CommandResult(returncode=0, stdout="", stderr=""),
-        CommandResult(returncode=0, stdout="tank/other\ton\tno\tavailable\n", stderr=""),
+        CommandResult(returncode=0, stdout="tank/other\ton\t/mnt/tank/other\tno\tavailable\n", stderr=""),
     )
     receiver = Receiver(allow_file=allow_file, runner=runner)
 
@@ -396,7 +396,7 @@ def test_receiver_unlock_skips_already_available_key(tmp_path: Path) -> None:
     allow_file = write_allowlist(tmp_path, "tank/photos")
     runner = RecordingLocalRunner(
         CommandResult(returncode=0, stdout="available\n", stderr=""),
-        CommandResult(returncode=0, stdout="tank/photos\ton\tno\tavailable\n", stderr=""),
+        CommandResult(returncode=0, stdout="tank/photos\ton\t/mnt/tank/photos\tno\tavailable\n", stderr=""),
         CommandResult(returncode=0, stdout="", stderr=""),
     )
     receiver = Receiver(allow_file=allow_file, runner=runner)
@@ -407,7 +407,7 @@ def test_receiver_unlock_skips_already_available_key(tmp_path: Path) -> None:
     assert response.stdout == "already unlocked tank/photos\n"
     assert runner.calls == [
         (["zfs", "get", "-H", "-o", "value", "keystatus", "tank/photos"], None),
-        (["zfs", "list", "-H", "-o", "name,canmount,mounted,keystatus", "-r", "tank/photos"], None),
+        (["zfs", "list", "-H", "-o", "name,canmount,mountpoint,mounted,keystatus", "-r", "tank/photos"], None),
         (["zfs", "mount", "tank/photos"], None),
     ]
 
@@ -476,7 +476,7 @@ def test_receiver_status_reports_unlocked_unmounted(tmp_path: Path) -> None:
     allow_file = write_allowlist(tmp_path, "tank/photos")
     runner = RecordingLocalRunner(
         CommandResult(returncode=0, stdout="available\n", stderr=""),
-        CommandResult(returncode=0, stdout="tank/photos\ton\tno\tavailable\n", stderr=""),
+        CommandResult(returncode=0, stdout="tank/photos\ton\t/mnt/tank/photos\tno\tavailable\n", stderr=""),
     )
     receiver = Receiver(allow_file=allow_file, runner=runner)
 
@@ -491,7 +491,7 @@ def test_receiver_status_reports_unlocked_when_fully_mounted(tmp_path: Path) -> 
     allow_file = write_allowlist(tmp_path, "tank/photos")
     runner = RecordingLocalRunner(
         CommandResult(returncode=0, stdout="available\n", stderr=""),
-        CommandResult(returncode=0, stdout="tank/photos\ton\tyes\tavailable\n", stderr=""),
+        CommandResult(returncode=0, stdout="tank/photos\ton\t/mnt/tank/photos\tyes\tavailable\n", stderr=""),
     )
     receiver = Receiver(allow_file=allow_file, runner=runner)
 
@@ -528,3 +528,60 @@ def test_receiver_allowlist_with_only_comments_rejects_all(tmp_path: Path) -> No
     assert isinstance(response, CommandResult)
     assert response.returncode == 1
     assert "dataset not allowed" in response.stderr
+
+
+def test_receiver_unlock_mount_skips_none_and_legacy_mountpoints(tmp_path: Path) -> None:
+    """Datasets without a ZFS-managed mountpoint are never mounted by the receiver.
+
+    `zfs mount` rejects mountpoint=none and mountpoint=legacy, and the first
+    failure would stop the rest of the subtree from mounting.
+    """
+    allow_file = write_allowlist(tmp_path, "tank/photos")
+    runner = RecordingLocalRunner(
+        CommandResult(returncode=0, stdout="unavailable\n", stderr=""),
+        CommandResult(returncode=0, stdout="", stderr=""),
+        CommandResult(
+            returncode=0,
+            stdout=(
+                "tank/photos\ton\t/mnt/tank/photos\tno\tavailable\n"
+                "tank/photos/incus\ton\tlegacy\tno\tavailable\n"
+                "tank/photos/mirror\ton\tnone\tno\tavailable\n"
+                "tank/photos/raw\ton\t/mnt/tank/photos/raw\tno\tavailable\n"
+            ),
+            stderr="",
+        ),
+        CommandResult(returncode=0, stdout="", stderr=""),
+        CommandResult(returncode=0, stdout="", stderr=""),
+    )
+    receiver = Receiver(allow_file=allow_file, runner=runner)
+
+    response = handle_request(receiver, "unlock", "tank/photos", stdin_text="secret-pass\n")
+
+    assert response.returncode == 0
+    assert [call[0] for call in runner.calls[3:]] == [
+        ["zfs", "mount", "tank/photos"],
+        ["zfs", "mount", "tank/photos/raw"],
+    ]
+
+
+def test_receiver_status_ignores_none_and_legacy_mountpoints(tmp_path: Path) -> None:
+    """Unmounted none/legacy datasets do not make an unlocked subtree look unmounted."""
+    allow_file = write_allowlist(tmp_path, "tank/photos")
+    runner = RecordingLocalRunner(
+        CommandResult(returncode=0, stdout="available\n", stderr=""),
+        CommandResult(
+            returncode=0,
+            stdout=(
+                "tank/photos\ton\t/mnt/tank/photos\tyes\tavailable\n"
+                "tank/photos/incus\ton\tlegacy\tno\tavailable\n"
+                "tank/photos/mirror\ton\tnone\tno\tavailable\n"
+            ),
+            stderr="",
+        ),
+    )
+    receiver = Receiver(allow_file=allow_file, runner=runner)
+
+    response = handle_request(receiver, "status", "tank/photos")
+
+    assert response.returncode == 0
+    assert response.stdout == "unlocked\n"
