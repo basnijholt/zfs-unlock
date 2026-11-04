@@ -221,18 +221,36 @@ class Receiver:
         """List unmounted-but-mountable datasets in a subtree, parents first.
 
         Datasets whose own key is still unavailable (nested encryption roots)
-        are skipped, matching `zfs mount -a` behavior.
+        are skipped, matching `zfs mount -a` behavior. So are mountpoint=none
+        and mountpoint=legacy datasets: `zfs mount` rejects them, and one such
+        failure would stop the rest of the subtree from mounting.
         """
         rows = self._subtree_rows(dataset, ["canmount", "mounted", "keystatus"])
         if isinstance(rows, CommandResult):
             return rows
 
-        mountable = [
-            name
-            for name, canmount, mounted, keystatus in rows
-            if canmount == "on" and mounted == "no" and keystatus != "unavailable"
-        ]
+        mountable: list[str] = []
+        for name, canmount, mounted, keystatus in rows:
+            if canmount != "on" or mounted != "no" or keystatus == "unavailable":
+                continue
+            mountpoint = self._mountpoint(name)
+            if isinstance(mountpoint, CommandResult):
+                return mountpoint
+            if mountpoint not in {"none", "legacy"}:
+                mountable.append(name)
         return sorted(mountable, key=lambda name: name.count("/"))
+
+    def _mountpoint(self, dataset: str) -> str | CommandResult:
+        """Read one dataset's mountpoint.
+
+        A mountpoint may contain tabs or newlines, which would corrupt the
+        tab-separated `zfs list` rows, so it is read on its own: the whole
+        output of a single-dataset `zfs get` is the value.
+        """
+        result = self.runner.run([self.zfs_path, "get", "-H", "-o", "value", "mountpoint", dataset])
+        if result.returncode != 0:
+            return CommandResult(returncode=1, stdout="", stderr=result.stderr)
+        return result.stdout.removesuffix("\n")
 
     def _mount_subtree(self, dataset: str) -> CommandResult | None:
         """Mount unmounted datasets in the unlocked subtree, parents first.
