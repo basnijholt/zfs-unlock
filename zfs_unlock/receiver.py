@@ -217,19 +217,19 @@ class Receiver:
             rows.append(fields)
         return rows
 
-    def _unmounted_mountable(self, dataset: str) -> list[str] | CommandResult:
-        """List unmounted-but-mountable datasets in a subtree, parents first.
+    def _unmounted_mountable(self, dataset: str) -> list[tuple[str, str]] | CommandResult:
+        """List unmounted-but-mountable datasets and their mountpoints, outer paths first.
 
         Datasets whose own key is still unavailable (nested encryption roots)
         are skipped, matching `zfs mount -a` behavior. So are mountpoint=none
-        and mountpoint=legacy datasets: `zfs mount` rejects them, so they
-        would fail every unlock and never count as mounted.
+        and mountpoint=legacy datasets: `zfs mount` rejects them, so each
+        would fail every unlock.
         """
         rows = self._subtree_rows(dataset, ["canmount", "mounted", "keystatus"])
         if isinstance(rows, CommandResult):
             return rows
 
-        mountable: list[str] = []
+        mountable: list[tuple[str, str]] = []
         for name, canmount, mounted, keystatus in rows:
             if canmount != "on" or mounted != "no" or keystatus == "unavailable":
                 continue
@@ -237,8 +237,8 @@ class Receiver:
             if isinstance(mountpoint, CommandResult):
                 return mountpoint
             if mountpoint not in {"none", "legacy"}:
-                mountable.append(name)
-        return sorted(mountable, key=lambda name: name.count("/"))
+                mountable.append((name, mountpoint))
+        return sorted(mountable, key=lambda row: row[1].rstrip("/").count("/"))
 
     def _mountpoint(self, dataset: str) -> str | CommandResult:
         """Read one dataset's mountpoint.
@@ -253,12 +253,13 @@ class Receiver:
         return result.stdout.removesuffix("\n")
 
     def _mount_subtree(self, dataset: str) -> CommandResult | None:
-        """Mount unmounted datasets in the unlocked subtree, parents first.
+        """Mount unmounted datasets in the unlocked subtree, outer paths first.
 
         Deliberately narrower than `zfs mount -a`, which would mount every
         mountable dataset on the host instead of only the allowlisted subtree.
-        One failed mount does not stop its siblings; only its descendants are
-        skipped, since they would mount into the directory below it.
+        A failed mount does not stop the others. Only datasets whose
+        mountpoint lies at or below a failed one are skipped: they would land
+        in the directory under it, and a later mount there would hide them.
         """
         mountable = self._unmounted_mountable(dataset)
         if isinstance(mountable, CommandResult):
@@ -266,12 +267,12 @@ class Receiver:
 
         failed: list[str] = []
         errors = ""
-        for name in mountable:
-            if any(name.startswith(f"{parent}/") for parent in failed):
+        for name, mountpoint in mountable:
+            if any(mountpoint == path or mountpoint.startswith(f"{path.rstrip('/')}/") for path in failed):
                 continue
             mount = self.runner.run([self.zfs_path, "mount", name])
             if mount.returncode != 0:
-                failed.append(name)
+                failed.append(mountpoint)
                 errors += mount.stderr
         return CommandResult(returncode=1, stdout="", stderr=errors) if failed else None
 
