@@ -217,8 +217,8 @@ class Receiver:
             rows.append(fields)
         return rows
 
-    def _unmounted_mountable(self, dataset: str) -> list[tuple[str, str]] | CommandResult:
-        """List unmounted-but-mountable datasets and their mountpoints, outer paths first.
+    def _unmounted_mountable(self, dataset: str) -> list[tuple[str, tuple[str, ...]]] | CommandResult:
+        """List unmounted-but-mountable datasets with their mountpoint components, outer paths first.
 
         Datasets whose own key is still unavailable (nested encryption roots)
         are skipped, matching `zfs mount -a` behavior. So are mountpoint=none
@@ -229,7 +229,7 @@ class Receiver:
         if isinstance(rows, CommandResult):
             return rows
 
-        mountable: list[tuple[str, str]] = []
+        mountable: list[tuple[str, tuple[str, ...]]] = []
         for name, canmount, mounted, keystatus in rows:
             if canmount != "on" or mounted != "no" or keystatus == "unavailable":
                 continue
@@ -237,8 +237,9 @@ class Receiver:
             if isinstance(mountpoint, CommandResult):
                 return mountpoint
             if mountpoint not in {"none", "legacy"}:
-                mountable.append((name, mountpoint))
-        return sorted(mountable, key=lambda row: row[1].rstrip("/").count("/"))
+                # Components, so that /a/, /a and //a compare as the same path.
+                mountable.append((name, tuple(part for part in mountpoint.split("/") if part)))
+        return sorted(mountable, key=lambda row: len(row[1]))
 
     def _mountpoint(self, dataset: str) -> str | CommandResult:
         """Read one dataset's mountpoint.
@@ -265,10 +266,10 @@ class Receiver:
         if isinstance(mountable, CommandResult):
             return mountable
 
-        failed: list[str] = []
+        failed: list[tuple[str, ...]] = []
         errors = ""
         for name, mountpoint in mountable:
-            if any(mountpoint == path or mountpoint.startswith(f"{path.rstrip('/')}/") for path in failed):
+            if any(mountpoint[: len(path)] == path for path in failed):
                 continue
             mount = self.runner.run([self.zfs_path, "mount", name])
             if mount.returncode != 0:

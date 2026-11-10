@@ -370,7 +370,7 @@ def test_receiver_unlock_fails_when_mount_fails(tmp_path: Path) -> None:
 
 
 def test_receiver_unlock_mounts_past_a_failed_mount(tmp_path: Path) -> None:
-    """A failed mount skips only datasets mounted at or below its path; the others still mount."""
+    """A failed mount skips only datasets mounted at or below its path, however spelled; the others still mount."""
     allow_file = write_allowlist(tmp_path, "tank/photos")
     runner = RecordingLocalRunner(
         CommandResult(returncode=0, stdout="unavailable\n", stderr=""),
@@ -390,12 +390,12 @@ def test_receiver_unlock_mounts_past_a_failed_mount(tmp_path: Path) -> None:
             ),
             stderr="",
         ),
-        CommandResult(returncode=0, stdout="/mnt/tank/photos/a\n", stderr=""),
+        CommandResult(returncode=0, stdout="/mnt/tank/photos/a/\n", stderr=""),
         CommandResult(returncode=0, stdout="/mnt/tank/photos/a/child\n", stderr=""),
         CommandResult(returncode=0, stdout="/mnt/tank/photos/a/child/grand\n", stderr=""),
         CommandResult(returncode=0, stdout="/srv/elsewhere\n", stderr=""),
         CommandResult(returncode=0, stdout="/mnt/tank/photos/ab\n", stderr=""),
-        CommandResult(returncode=0, stdout="/mnt/tank/photos/a/b\n", stderr=""),
+        CommandResult(returncode=0, stdout="/mnt/tank/photos//a/b\n", stderr=""),
         CommandResult(returncode=0, stdout="/mnt/tank/photos/c\n", stderr=""),
         CommandResult(returncode=0, stdout="/mnt/tank/photos/d\n", stderr=""),
         CommandResult(returncode=0, stdout="", stderr=""),
