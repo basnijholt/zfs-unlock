@@ -222,8 +222,8 @@ class Receiver:
 
         Datasets whose own key is still unavailable (nested encryption roots)
         are skipped, matching `zfs mount -a` behavior. So are mountpoint=none
-        and mountpoint=legacy datasets: `zfs mount` rejects them, and one such
-        failure would stop the rest of the subtree from mounting.
+        and mountpoint=legacy datasets: `zfs mount` rejects them, so they
+        would fail every unlock and never count as mounted.
         """
         rows = self._subtree_rows(dataset, ["canmount", "mounted", "keystatus"])
         if isinstance(rows, CommandResult):
@@ -257,16 +257,23 @@ class Receiver:
 
         Deliberately narrower than `zfs mount -a`, which would mount every
         mountable dataset on the host instead of only the allowlisted subtree.
+        One failed mount does not stop its siblings; only its descendants are
+        skipped, since they would mount into the directory below it.
         """
         mountable = self._unmounted_mountable(dataset)
         if isinstance(mountable, CommandResult):
             return mountable
 
+        failed: list[str] = []
+        errors = ""
         for name in mountable:
+            if any(name.startswith(f"{parent}/") for parent in failed):
+                continue
             mount = self.runner.run([self.zfs_path, "mount", name])
             if mount.returncode != 0:
-                return CommandResult(returncode=1, stdout="", stderr=mount.stderr)
-        return None
+                failed.append(name)
+                errors += mount.stderr
+        return CommandResult(returncode=1, stdout="", stderr=errors) if failed else None
 
     def _mounted_datasets(self, dataset: str) -> list[str] | CommandResult:
         rows = self._subtree_rows(dataset, ["mounted"])

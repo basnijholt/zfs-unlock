@@ -369,6 +369,44 @@ def test_receiver_unlock_fails_when_mount_fails(tmp_path: Path) -> None:
     ]
 
 
+def test_receiver_unlock_mounts_past_a_failed_mount(tmp_path: Path) -> None:
+    """A failed mount skips only its descendants; its siblings still mount."""
+    allow_file = write_allowlist(tmp_path, "tank/photos")
+    runner = RecordingLocalRunner(
+        CommandResult(returncode=0, stdout="unavailable\n", stderr=""),
+        CommandResult(returncode=0, stdout="", stderr=""),
+        CommandResult(
+            returncode=0,
+            stdout=(
+                "tank/photos\ton\tyes\tavailable\n"
+                "tank/photos/a\ton\tno\tavailable\n"
+                "tank/photos/a/child\ton\tno\tavailable\n"
+                "tank/photos/b\ton\tno\tavailable\n"
+                "tank/photos/c\ton\tno\tavailable\n"
+            ),
+            stderr="",
+        ),
+        CommandResult(returncode=0, stdout="/mnt/tank/photos/a\n", stderr=""),
+        CommandResult(returncode=0, stdout="/mnt/tank/photos/a/child\n", stderr=""),
+        CommandResult(returncode=0, stdout="/mnt/tank/photos/b\n", stderr=""),
+        CommandResult(returncode=0, stdout="/mnt/tank/photos/c\n", stderr=""),
+        CommandResult(returncode=1, stdout="", stderr="cannot mount a\n"),
+        CommandResult(returncode=1, stdout="", stderr="cannot mount b\n"),
+        CommandResult(returncode=0, stdout="", stderr=""),
+    )
+    receiver = Receiver(allow_file=allow_file, runner=runner)
+
+    response = handle_request(receiver, "unlock", "tank/photos", stdin_text="secret-pass\n")
+
+    assert response.returncode == 1
+    assert response.stderr == "cannot mount a\ncannot mount b\n"
+    assert [call[0] for call in runner.calls if call[0][1] == "mount"] == [
+        ["zfs", "mount", "tank/photos/a"],
+        ["zfs", "mount", "tank/photos/b"],
+        ["zfs", "mount", "tank/photos/c"],
+    ]
+
+
 def test_receiver_unlock_rejects_subtree_listing_outside_target(tmp_path: Path) -> None:
     """Subtree mounting refuses zfs list output outside the unlocked dataset."""
     allow_file = write_allowlist(tmp_path, "tank/photos")
