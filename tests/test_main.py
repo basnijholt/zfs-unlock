@@ -381,7 +381,9 @@ def test_receiver_unlock_mounts_past_a_failed_mount(tmp_path: Path) -> None:
                 "tank/photos\ton\tyes\tavailable\n"
                 "tank/photos/a\ton\tno\tavailable\n"
                 "tank/photos/a/child\ton\tno\tavailable\n"
+                "tank/photos/a/child/grand\ton\tno\tavailable\n"
                 "tank/photos/a/elsewhere\ton\tno\tavailable\n"
+                "tank/photos/ab\ton\tno\tavailable\n"
                 "tank/photos/b\ton\tno\tavailable\n"
                 "tank/photos/c\ton\tno\tavailable\n"
                 "tank/photos/d\ton\tno\tavailable\n"
@@ -390,12 +392,15 @@ def test_receiver_unlock_mounts_past_a_failed_mount(tmp_path: Path) -> None:
         ),
         CommandResult(returncode=0, stdout="/mnt/tank/photos/a\n", stderr=""),
         CommandResult(returncode=0, stdout="/mnt/tank/photos/a/child\n", stderr=""),
+        CommandResult(returncode=0, stdout="/mnt/tank/photos/a/child/grand\n", stderr=""),
         CommandResult(returncode=0, stdout="/srv/elsewhere\n", stderr=""),
+        CommandResult(returncode=0, stdout="/mnt/tank/photos/ab\n", stderr=""),
         CommandResult(returncode=0, stdout="/mnt/tank/photos/a/b\n", stderr=""),
         CommandResult(returncode=0, stdout="/mnt/tank/photos/c\n", stderr=""),
         CommandResult(returncode=0, stdout="/mnt/tank/photos/d\n", stderr=""),
         CommandResult(returncode=0, stdout="", stderr=""),
         CommandResult(returncode=1, stdout="", stderr="cannot mount a\n"),
+        CommandResult(returncode=0, stdout="", stderr=""),
         CommandResult(returncode=1, stdout="", stderr="cannot mount c\n"),
         CommandResult(returncode=0, stdout="", stderr=""),
     )
@@ -409,6 +414,7 @@ def test_receiver_unlock_mounts_past_a_failed_mount(tmp_path: Path) -> None:
     assert [call[0] for call in runner.calls if call[0][1] == "mount"] == [
         ["zfs", "mount", "tank/photos/a/elsewhere"],
         ["zfs", "mount", "tank/photos/a"],
+        ["zfs", "mount", "tank/photos/ab"],
         ["zfs", "mount", "tank/photos/c"],
         ["zfs", "mount", "tank/photos/d"],
     ]
