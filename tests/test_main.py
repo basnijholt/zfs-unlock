@@ -369,6 +369,57 @@ def test_receiver_unlock_fails_when_mount_fails(tmp_path: Path) -> None:
     ]
 
 
+def test_receiver_unlock_mounts_past_a_failed_mount(tmp_path: Path) -> None:
+    """A failed mount skips only datasets mounted at or below its path, however spelled; the others still mount."""
+    allow_file = write_allowlist(tmp_path, "tank/photos")
+    runner = RecordingLocalRunner(
+        CommandResult(returncode=0, stdout="unavailable\n", stderr=""),
+        CommandResult(returncode=0, stdout="", stderr=""),
+        CommandResult(
+            returncode=0,
+            stdout=(
+                "tank/photos\ton\tyes\tavailable\n"
+                "tank/photos/a\ton\tno\tavailable\n"
+                "tank/photos/a/child\ton\tno\tavailable\n"
+                "tank/photos/a/child/grand\ton\tno\tavailable\n"
+                "tank/photos/a/elsewhere\ton\tno\tavailable\n"
+                "tank/photos/ab\ton\tno\tavailable\n"
+                "tank/photos/b\ton\tno\tavailable\n"
+                "tank/photos/c\ton\tno\tavailable\n"
+                "tank/photos/d\ton\tno\tavailable\n"
+            ),
+            stderr="",
+        ),
+        CommandResult(returncode=0, stdout="/mnt/tank/photos/a/\n", stderr=""),
+        CommandResult(returncode=0, stdout="/mnt/tank/photos/a/child\n", stderr=""),
+        CommandResult(returncode=0, stdout="/mnt/tank/photos/a/child/grand\n", stderr=""),
+        CommandResult(returncode=0, stdout="/srv/elsewhere\n", stderr=""),
+        CommandResult(returncode=0, stdout="/mnt/tank/photos/ab\n", stderr=""),
+        CommandResult(returncode=0, stdout="/mnt/tank/photos//a/b\n", stderr=""),
+        CommandResult(returncode=0, stdout="/mnt/tank/photos/c\n", stderr=""),
+        CommandResult(returncode=0, stdout="/mnt/tank/photos/d\n", stderr=""),
+        CommandResult(returncode=0, stdout="", stderr=""),
+        CommandResult(returncode=1, stdout="", stderr="cannot mount a\n"),
+        CommandResult(returncode=0, stdout="", stderr=""),
+        CommandResult(returncode=1, stdout="", stderr="cannot mount c\n"),
+        CommandResult(returncode=0, stdout="", stderr=""),
+    )
+    receiver = Receiver(allow_file=allow_file, runner=runner)
+
+    response = handle_request(receiver, "unlock", "tank/photos", stdin_text="secret-pass\n")
+
+    assert response.returncode == 1
+    assert response.stdout == ""
+    assert response.stderr == "cannot mount a\ncannot mount c\n"
+    assert [call[0] for call in runner.calls if call[0][1] == "mount"] == [
+        ["zfs", "mount", "tank/photos/a/elsewhere"],
+        ["zfs", "mount", "tank/photos/a"],
+        ["zfs", "mount", "tank/photos/ab"],
+        ["zfs", "mount", "tank/photos/c"],
+        ["zfs", "mount", "tank/photos/d"],
+    ]
+
+
 def test_receiver_unlock_rejects_subtree_listing_outside_target(tmp_path: Path) -> None:
     """Subtree mounting refuses zfs list output outside the unlocked dataset."""
     allow_file = write_allowlist(tmp_path, "tank/photos")
@@ -546,8 +597,8 @@ def test_receiver_allowlist_with_only_comments_rejects_all(tmp_path: Path) -> No
 def test_receiver_unlock_mount_skips_none_and_legacy_mountpoints(tmp_path: Path) -> None:
     """Datasets without a ZFS-managed mountpoint are never mounted by the receiver.
 
-    `zfs mount` rejects mountpoint=none and mountpoint=legacy, and the first
-    failure would stop the rest of the subtree from mounting.
+    `zfs mount` rejects mountpoint=none and mountpoint=legacy, so each would
+    fail every unlock.
     """
     allow_file = write_allowlist(tmp_path, "tank/photos")
     runner = RecordingLocalRunner(
