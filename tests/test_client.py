@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from zfs_unlock.client import SubprocessRunner, UnlockOutcome, ZfsUnlockClient, run_unlock
+from zfs_unlock.client import SubprocessRunner, UnlockOutcome, ZfsUnlockClient, run_status, run_unlock
 from zfs_unlock.config import Config, Dataset
 from zfs_unlock.constants import (
     COMMAND_STARTUP_ERROR_RETURNCODE,
@@ -369,6 +369,44 @@ def test_run_unlock_remounts_unlocked_unmounted_dataset() -> None:
     assert outcome is UnlockOutcome.OK
     remote_commands = [call[0][-1] for call in runner.calls]
     assert remote_commands == ["status tank/photos", "unlock tank/photos"]
+
+
+class _OverlapRunner:
+    """Runner that answers "unlocked" and records the most commands in flight at once."""
+
+    def __init__(self) -> None:
+        """Start with nothing in flight."""
+        self.in_flight = 0
+        self.peak = 0
+
+    async def run(
+        self,
+        args: list[str],  # noqa: ARG002
+        *,
+        input_text: str | None = None,  # noqa: ARG002
+        command_timeout: float | None = None,  # noqa: ARG002
+    ) -> CommandResult:
+        """Hold the command briefly so parallel calls overlap."""
+        self.in_flight += 1
+        self.peak = max(self.peak, self.in_flight)
+        await asyncio.sleep(0.01)
+        self.in_flight -= 1
+        return CommandResult(returncode=0, stdout="unlocked\n", stderr="")
+
+
+def test_status_checks_stay_under_sshd_maxstartups() -> None:
+    """Parallel status checks never open 10 SSH connections at once.
+
+    sshd's default MaxStartups (10:30:100) drops new connections at random
+    once 10 are still authenticating, so a config with more datasets would
+    see random status failures on every pass.
+    """
+    datasets = [Dataset(path=f"tank/d{i}", secret="pass") for i in range(20)]
+    config = Config(host="zfs-host.example.lan", datasets=datasets)
+    runner = _OverlapRunner()
+
+    assert asyncio.run(run_status(config, runner=runner)) is True
+    assert 1 < runner.peak < 10  # noqa: PLR2004
 
 
 def test_remote_exit_127_is_not_a_connection_error() -> None:

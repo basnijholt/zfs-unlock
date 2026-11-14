@@ -28,6 +28,10 @@ _CONNECTION_ERROR_RETURNCODES = frozenset(
     },
 )
 
+# sshd's default MaxStartups (10:30:100) drops new connections at random once
+# 10 are still authenticating, and other SSH clients of the host count too.
+_MAX_PARALLEL_SSH = 4
+
 
 class UnlockOutcome(StrEnum):
     """Aggregate result of one unlock pass."""
@@ -56,6 +60,7 @@ class ZfsUnlockClient:
     def __init__(self, config: Config, *, runner: CommandRunner | None = None) -> None:  # noqa: D107
         self.config = config
         self.runner = runner or SubprocessRunner()
+        self._ssh_slots = asyncio.Semaphore(_MAX_PARALLEL_SSH)
 
     def _ssh_args(self, remote_args: list[str], *, close_stdin: bool = False) -> list[str]:
         args = [
@@ -82,11 +87,12 @@ class ZfsUnlockClient:
 
     async def run_remote(self, remote_args: list[str], *, input_text: str | None = None) -> CommandResult:
         """Run a receiver command over SSH."""
-        return await self.runner.run(
-            self._ssh_args(remote_args, close_stdin=input_text is None),
-            input_text=input_text,
-            command_timeout=self.config.command_timeout,
-        )
+        async with self._ssh_slots:
+            return await self.runner.run(
+                self._ssh_args(remote_args, close_stdin=input_text is None),
+                input_text=input_text,
+                command_timeout=self.config.command_timeout,
+            )
 
     async def is_locked(self, dataset: Dataset, *, quiet: bool = False) -> DatasetStatus:
         """Check whether a dataset key is unavailable."""
